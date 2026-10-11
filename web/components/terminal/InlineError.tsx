@@ -24,7 +24,7 @@ export function errorText(error: unknown): string {
   if (error && typeof error === "object" && "shortMessage" in error && typeof error.shortMessage === "string") {
     return error.shortMessage;
   }
-  if (error instanceof TypeError) {
+  if (error instanceof TypeError && /fetch|network|load failed/i.test(error.message)) {
     return "backend unreachable";
   }
   if (error instanceof Error) {
