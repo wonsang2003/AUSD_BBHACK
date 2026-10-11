@@ -34,6 +34,7 @@ Deribit facts this module relies on:
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -72,6 +73,15 @@ EXPIRY_CODE_PATTERN = re.compile(r"^(?P<day>\d{1,2})(?P<month>[A-Z]{3})(?P<year>
 VOL_LISTED = "listed_expiry"                     # the requested expiry is listed on Deribit
 VOL_INTERPOLATED = "interpolated_total_variance"  # between the two bracketing listed expiries
 VOL_FLAT = "flat_nearest_expiry"                 # outside the listed range: nearest σ held flat
+
+# How far a σ can be trusted (0–1), by how it was obtained. Sellers start their
+# `confidence` from this number: a σ read straight off the requested expiry is best,
+# an interpolated one is close, a σ held flat outside the listed range is a guess.
+CONFIDENCE_BY_VOL_METHOD: dict[str, float] = {
+    VOL_LISTED: 0.9,
+    VOL_INTERPOLATED: 0.8,
+    VOL_FLAT: 0.6,
+}
 
 
 # ─── which Deribit listing serves which asset ────────────────────────────────
@@ -138,11 +148,14 @@ def parse_expiry_code(code: str) -> datetime:
 
 
 def parse_strike_code(code: str) -> float:
-    """`100000` → 100000.0 and `2d5` → 2.5 (USDC options use `d` as the decimal point)."""
+    """`100000` → 100000.0 and `2d5` → 2.5 (USDC options use `d` as the decimal point); must be > 0."""
     try:
-        return float(code.replace(STRIKE_DECIMAL_MARKER, "."))
+        strike = float(code.replace(STRIKE_DECIMAL_MARKER, "."))
     except ValueError as exc:
         raise DeribitDataError(f"not a Deribit strike: {code!r}") from exc
+    if not math.isfinite(strike) or strike <= 0:
+        raise DeribitDataError(f"not a positive Deribit strike: {code!r}")
+    return strike
 
 
 def parse_instrument_name(name: str) -> InstrumentName:
@@ -212,7 +225,7 @@ def _quote_from_item(item: dict, instrument_prefix: str) -> OptionQuote | None:
     if not name.startswith(instrument_prefix + "-"):
         return None
     mark_iv_percent = item.get("mark_iv")
-    if mark_iv_percent is None or mark_iv_percent <= 0:
+    if not isinstance(mark_iv_percent, (int, float)) or mark_iv_percent <= 0:
         return None
     try:
         parsed = parse_instrument_name(name)
@@ -231,8 +244,11 @@ def _quote_from_item(item: dict, instrument_prefix: str) -> OptionQuote | None:
 def parse_book_summary(payload: dict, asset: str) -> list[OptionQuote]:
     """All options of `asset` with a usable mark IV from a get_book_summary_by_currency payload."""
     underlying = get_underlying(asset)
+    items = _rpc_result(payload)
+    if not isinstance(items, list):
+        raise DeribitDataError("Deribit book summary `result` is not a list")
     quotes = []
-    for item in _rpc_result(payload):
+    for item in items:
         quote = _quote_from_item(item, underlying.instrument_prefix)
         if quote is not None:
             quotes.append(quote)
@@ -242,8 +258,10 @@ def parse_book_summary(payload: dict, asset: str) -> list[OptionQuote]:
 def parse_index_price(payload: dict) -> float:
     """Spot index price in USD from a get_index_price payload (`result.index_price`)."""
     result = _rpc_result(payload)
+    if not isinstance(result, dict):
+        raise DeribitDataError("Deribit index `result` is not an object")
     index_price = result.get("index_price")
-    if index_price is None or index_price <= 0:
+    if not isinstance(index_price, (int, float)) or index_price <= 0:
         raise DeribitDataError(f"Deribit index price missing or not positive: {index_price!r}")
     return float(index_price)
 

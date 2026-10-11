@@ -1,12 +1,12 @@
 {
   "description": "Official 2026 US macro release schedule used by macro_pulse (next scheduled release) and the keeper event calendar (agent weighting). FOMC dates are two-day meetings; the policy decision is announced on decision_date. CPI release_time_et is from the BLS schedule table.",
   "timezone": "America/New_York",
-  "verified_on": "2026-10-11",
-  "verify_note": "Copied from the two official pages below on 2026-10-11. The Fed and BLS can change dates (e.g. after a government shutdown); re-check both pages before relying on a date for anything time-sensitive.",
-  "sources": {
+  "source": {
     "fomc": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
     "cpi": "https://www.bls.gov/schedule/news_release/cpi.htm"
   },
+  "verify": "Checked 2026-10-11 by web search (the official pages were not reachable from the build container). FOMC: all 8 meetings match the federalreserve.gov calendar as quoted in search results and the Chicago Fed's copy (SEP meetings: Mar, Jun, Sep, Dec). CPI: all 12 dates match several calendars compiled from the BLS schedule (Jan 13; Feb 13, rescheduled from Feb 11; Mar 11; Apr 10; May 12; Jun 10; Jul 14, also on bls.gov/cpi; Aug 12; Sep 11; Oct 14; Nov 10; Dec 10). The Fed and BLS can move dates (e.g. after a government shutdown): open both official pages and re-check before the demo.",
+  "verified_on": "2026-10-11",
   "fomc": [
     {"start_date": "2026-01-27", "decision_date": "2026-01-28", "has_sep": false},
     {"start_date": "2026-03-17", "decision_date": "2026-03-18", "has_sep": true},

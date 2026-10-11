@@ -62,13 +62,16 @@ class TokenInfo:
 
 
 def default_registry() -> list[TokenInfo]:
-    """The registry in preference order (AUSD first)."""
+    """The registry in preference order (AUSD first). The AUSD address comes from settings
+    (defaults to the official testnet address; a local anvil run points it at MockAUSD)."""
+    from app.config import get_settings  # local import: keeps this module importable without .env
+
     return [
         TokenInfo(
             symbol="AUSD",
             chain_id=BASE_SEPOLIA_CHAIN_ID,
             caip2=BASE_SEPOLIA_CAIP2,
-            address=to_checksum_address(AUSD_TESTNET_ADDRESS),
+            address=to_checksum_address(get_settings().ausd_address or AUSD_TESTNET_ADDRESS),
             eip712_name=AUSD_EIP712_NAME,
             eip712_version=AUSD_EIP712_VERSION,
             decimals=AUSD_DECIMALS,

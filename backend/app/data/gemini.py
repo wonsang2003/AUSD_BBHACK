@@ -8,6 +8,8 @@ Flow:
     fetch_event_payload(ticker)      GET /v1/prediction-markets/events/{eventTicker}
                     ▼                (async, network, through app/data/http.py)
     parse_events(list_payload)       → [event dict]                       pure, tested with fixtures
+    parse_event(detail_payload)      → event dict
+    event_asset(event)               → "BTC" / "ETH" / ... (title, else documented ticker)
     parse_contracts(event)           → [PredictionContract]
     parse_price_threshold(contract)  → PriceThreshold   "BTC finishes above $K at <expiry>"
     yes_quote(contract)              → YesQuote         market P(YES) and the prices to trade at
@@ -24,6 +26,12 @@ API facts (developer.gemini.com → Prediction Markets → Events):
     * `instrumentSymbol` is used exactly as returned; we never build one from a title or ticker.
     * Strike type "above" is a Higher/Lower threshold judged at expiry ("finishes above K");
       "reference" is a short-horizon Up/Down market whose strike is fixed later.
+    * Crypto ticker format (developer.gemini.com → Prediction Markets → Crypto Ticker Format):
+      event `BTC2603230800` = underlying + optional `05M`/`15M` duration + expiry YYMMDDHHmm
+      (UTC); instrument `GEMI-BTC2603230800-HI105000` where `HI{PRICE}` means "at or above
+      PRICE at expiry" (`D` is the decimal point: `HI2D20` = 2.20) and `UP` is a short-window
+      Up/Down contract. We only PARSE these documented symbols as a fallback for a missing
+      strike/asset/expiry; we never build one.
 """
 
 from __future__ import annotations
@@ -50,6 +58,16 @@ STRIKE_TYPE_ABOVE = "above"
 ONE = Decimal("1")
 THOUSAND = Decimal("1000")
 
+# Documented crypto ticker formats (see the module docstring).
+SYMBOL_DATETIME_FORMAT = "%y%m%d%H%M"                     # "2603230800" → 2026-03-23 08:00 UTC
+SYMBOL_DECIMAL_MARKER = "D"                               # "2D20" → 2.20
+SHORT_DURATION_MARKERS = ("05M", "15M")
+EVENT_TICKER_PATTERN = re.compile(r"^(?P<underlying>[A-Z]+)(?P<duration>05M|15M)?(?P<expiry>\d{10})$")
+INSTRUMENT_SYMBOL_PATTERN = re.compile(
+    r"^GEMI-(?P<underlying>[A-Z]+)(?P<duration>05M|15M)?(?P<expiry>\d{10})"
+    r"-(?P<contract>UP|HI(?P<price>\d+(?:D\d+)?))$"
+)
+
 # Crypto symbols we can recognise in a contract label or event title, with their names.
 ASSET_ALIASES: dict[str, tuple[str, ...]] = {
     "BTC": ("BTC", "BITCOIN"),
@@ -59,9 +77,14 @@ ASSET_ALIASES: dict[str, tuple[str, ...]] = {
     "DOGE": ("DOGE", "DOGECOIN"),
 }
 
-# "BTC > $110,000", "ETH above $4,200.50", "BTC over $110k"  → amount 110,000 / 4,200.50 / 110k
+# "BTC > $110,000", "ETH above $4,200.50", "BTC over $110k", "≥ $90"  → 110,000 / 4,200.50 / 110k / 90
 LABEL_STRIKE_PATTERN = re.compile(
-    r"(?:>|\babove\b|\bover\b)\s*\$\s*(?P<amount>\d[\d,]*(?:\.\d+)?)\s*(?P<thousands>k\b)?",
+    r"(?:>=?|≥|\babove\b|\bover\b)\s*\$\s*(?P<amount>\d[\d,]*(?:\.\d+)?)\s*(?P<thousands>k\b)?",
+    re.IGNORECASE,
+)
+# "$110,000 or above", "$110k or higher", "$110,000+"
+LABEL_STRIKE_SUFFIX_PATTERN = re.compile(
+    r"\$\s*(?P<amount>\d[\d,]*(?:\.\d+)?)\s*(?P<thousands>k\b)?\s*(?:or\s+(?:above|higher|more)\b|\+)",
     re.IGNORECASE,
 )
 
@@ -75,6 +98,10 @@ BASIS_LAST_TRADE = "last_trade"   # no two-sided quote: last traded price
 BASIS_ONE_SIDED = "one_sided"     # only a bid or only an ask
 
 
+class GeminiDataError(ValueError):
+    """A Gemini payload does not have the documented shape."""
+
+
 class UnsupportedContract(ValueError):
     """This contract cannot be compared with option prices; the message says why."""
 
@@ -82,20 +109,24 @@ class UnsupportedContract(ValueError):
 # ─── parsing helpers ─────────────────────────────────────────────────────────
 
 def parse_decimal(value: object) -> Decimal | None:
-    """A Gemini price/strike string such as "0.65" → Decimal("0.65"); null or junk → None."""
+    """A Gemini price/strike string such as "0.65" → Decimal("0.65"); null, junk or NaN → None."""
     if value is None or value == "":
         return None
     try:
-        return Decimal(str(value))
+        number = Decimal(str(value))
     except InvalidOperation:
         return None
+    return number if number.is_finite() else None
 
 
 def parse_timestamp(value: str | None) -> datetime | None:
-    """ISO-8601 such as "2026-10-16T21:00:00.000Z" → aware UTC datetime; null → None."""
+    """ISO-8601 such as "2026-10-16T21:00:00.000Z" → aware UTC datetime; null or junk → None."""
     if not value:
         return None
-    parsed = datetime.fromisoformat(value)
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
@@ -124,10 +155,19 @@ class PredictionContract:
 
 def parse_events(list_payload: dict) -> list[dict]:
     """The event objects of a List Events payload (`{"data": [...], "pagination": ...}`)."""
-    events = list_payload.get("data")
+    events = list_payload.get("data") if isinstance(list_payload, dict) else None
     if not isinstance(events, list):
-        raise ValueError("Gemini events payload has no `data` list")
-    return events
+        raise GeminiDataError("Gemini events payload has no `data` list")
+    return [event for event in events if isinstance(event, dict)]
+
+
+def parse_event(detail_payload: dict) -> dict:
+    """The bare Event of a Get Event payload; it must carry a `ticker` and a `contracts` list."""
+    if not isinstance(detail_payload, dict) or not detail_payload.get("ticker"):
+        raise GeminiDataError("Gemini event payload has no `ticker`")
+    if not isinstance(detail_payload.get("contracts"), list):
+        raise GeminiDataError(f"Gemini event {detail_payload['ticker']} has no `contracts` list")
+    return detail_payload
 
 
 def _parse_contract(event: dict, contract: dict) -> PredictionContract:
@@ -162,6 +202,43 @@ def is_tradable(contract: PredictionContract) -> bool:
     return contract.status == STATUS_ACTIVE and is_open and bool(contract.instrument_symbol)
 
 
+# ─── documented crypto ticker formats ────────────────────────────────────────
+
+@dataclass(frozen=True)
+class CryptoSymbol:
+    """The parts of a crypto instrument symbol such as `GEMI-BTC2603230800-HI105000`."""
+
+    underlying: str              # "BTC"
+    duration: str | None         # "05M", "15M" or None (daily and longer)
+    expiry: datetime             # UTC
+    strike: Decimal | None       # 105000 for `HI105000`; None for an `UP` contract
+
+
+def _parse_symbol_expiry(code: str) -> datetime:
+    """"2603230800" (YYMMDDHHmm, UTC) → 2026-03-23 08:00 UTC."""
+    return datetime.strptime(code, SYMBOL_DATETIME_FORMAT).replace(tzinfo=timezone.utc)
+
+
+def parse_crypto_instrument_symbol(symbol: str) -> CryptoSymbol | None:
+    """Parse a documented crypto instrument symbol; None if `symbol` does not follow that format."""
+    match = INSTRUMENT_SYMBOL_PATTERN.match(symbol or "")
+    if match is None:
+        return None
+    try:
+        expiry = _parse_symbol_expiry(match["expiry"])
+    except ValueError:
+        return None
+    price = match["price"]
+    strike = Decimal(price.replace(SYMBOL_DECIMAL_MARKER, ".")) if price else None
+    return CryptoSymbol(underlying=match["underlying"], duration=match["duration"], expiry=expiry, strike=strike)
+
+
+def is_short_duration_event(event_ticker: str) -> bool:
+    """True for 5- or 15-minute crypto events (`BTC05M2602251745`): Up/Down, strike set later."""
+    match = EVENT_TICKER_PATTERN.match(event_ticker or "")
+    return match is not None and match["duration"] in SHORT_DURATION_MARKERS
+
+
 # ─── "ASSET finishes above $K at expiry" ─────────────────────────────────────
 
 @dataclass(frozen=True)
@@ -182,9 +259,24 @@ def detect_asset(text: str) -> str | None:
     return None
 
 
+def event_asset(event: dict) -> str | None:
+    """
+    The crypto asset an event is about: the first asset named in its title, else the
+    underlying of a documented crypto event ticker (`BTC2603230800` → "BTC"), else None.
+    """
+    asset = detect_asset(event.get("title") or "")
+    if asset is not None:
+        return asset
+    match = EVENT_TICKER_PATTERN.match(event.get("ticker") or "")
+    return match["underlying"] if match is not None else None
+
+
 def parse_label_strike(label: str) -> Decimal | None:
-    """Strike from a label like "BTC > $110,000" or "above $110k" (k = × 1 000); None if absent."""
-    match = LABEL_STRIKE_PATTERN.search(label)
+    """
+    Strike from a label like "BTC > $110,000", "above $110k" or "$110,000 or above"
+    (k = × 1 000); None if the label names no finish-above strike.
+    """
+    match = LABEL_STRIKE_PATTERN.search(label) or LABEL_STRIKE_SUFFIX_PATTERN.search(label)
     if match is None:
         return None
     amount = Decimal(match["amount"].replace(",", ""))
@@ -197,9 +289,12 @@ def _threshold_strike(contract: PredictionContract) -> Decimal:
     """
     The strike K of a finish-above contract, or UnsupportedContract with the reason.
 
-    Rule: trust the API's `strike` object when it says type "above"; reject any other
-    strike type (e.g. "reference" Up/Down markets); without a strike object, read
-    "> $K" / "above $K" from the label unless the wording is a touch ("reach", "hit").
+    Rule, in order of trust:
+      1. the API's `strike` object when its type is "above" (any other type, e.g. a
+         "reference" Up/Down market, is rejected);
+      2. the `HI{PRICE}` part of a documented crypto instrument symbol;
+      3. "> $K" / "above $K" / "$K or above" in the label, unless the wording is a touch
+         ("reach", "hit"), which N(d2) cannot price.
     """
     if contract.strike_type is not None:
         if contract.strike_type != STRIKE_TYPE_ABOVE:
@@ -207,6 +302,10 @@ def _threshold_strike(contract: PredictionContract) -> Decimal:
         if contract.strike_value is None:
             raise UnsupportedContract("strike value not published yet")
         return contract.strike_value
+
+    symbol = parse_crypto_instrument_symbol(contract.instrument_symbol)
+    if symbol is not None and symbol.strike is not None:
+        return symbol.strike
 
     wording = f"{contract.event_title} {contract.label}"
     if TOUCH_PATTERN.search(wording):
@@ -221,18 +320,23 @@ def parse_price_threshold(contract: PredictionContract) -> PriceThreshold:
     """
     Read "ASSET finishes above $K at expiry T" from a contract (SPEC: "BTC above $X on <date>").
 
-    Asset comes from the label, else the event title; strike from `_threshold_strike`;
-    expiry from the contract's (else the event's) expiryDate.
+    Asset comes from the label, else the event title, else the instrument symbol; strike
+    from `_threshold_strike`; expiry from the contract's (else the event's) expiryDate,
+    else the instrument symbol.
     """
+    symbol = parse_crypto_instrument_symbol(contract.instrument_symbol)
     asset = detect_asset(contract.label) or detect_asset(contract.event_title)
+    if asset is None and symbol is not None:
+        asset = symbol.underlying
     if asset is None:
         raise UnsupportedContract("no known crypto asset named in the contract")
     strike = _threshold_strike(contract)
     if strike <= 0:
         raise UnsupportedContract(f"strike must be positive, got {strike}")
-    if contract.expiry is None:
+    expiry = contract.expiry or (symbol.expiry if symbol is not None else None)
+    if expiry is None:
         raise UnsupportedContract("contract has no expiryDate")
-    return PriceThreshold(asset=asset, strike=float(strike), expiry=contract.expiry)
+    return PriceThreshold(asset=asset, strike=float(strike), expiry=expiry)
 
 
 # ─── prices ──────────────────────────────────────────────────────────────────

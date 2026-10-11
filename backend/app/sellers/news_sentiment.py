@@ -14,9 +14,11 @@ What we compute:
                  are treated as "no data" and left out of the means.
     event flags  keyword rules over headlines: hack, exploit, listing, delisting,
                  lawsuit, sec, guidance, downgrade, upgrade, etf, halt, bankruptcy
-    summary      `summarize(headlines, tone, flags)` — a deterministic template today.
-                 It is the hook where LLM phrasing can be plugged in later; numbers
-                 and flags always come from this module, never from the LLM.
+    summary      `summarize(headlines, tone, flags)` — a deterministic template. An LLM
+                 phrasing step (e.g. `app/agents/llm.py`) can be plugged in with
+                 `set_summarizer(fn)`; it only rephrases these facts, and any failure
+                 falls back to the template. Numbers and flags always come from this
+                 module, never from the LLM. `summary_method` says which one was used.
 
 Agents read `tone_delta` and `event_flags` — see
 `app/agents/beliefs.update_from_news_sentiment`.
@@ -26,9 +28,10 @@ This module never imports the x402 server; `app/sellers/routers.py` wraps `compu
 
 from __future__ import annotations
 
+import logging
 import re
 import statistics
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import TypeVar
@@ -38,6 +41,7 @@ from app.data import contextdev, gdelt
 from app.data.contextdev import SearchResult
 from app.data.gdelt import Article, GdeltError, TonePoint
 from app.data.http import UpstreamError
+from app.sellers.expected_move import require_payout_address
 from app.x402.offer import SellerOffer
 
 # ─── offer ───────────────────────────────────────────────────────────────────
@@ -45,6 +49,7 @@ from app.x402.offer import SellerOffer
 SELLER_ID = "news_sentiment"
 SELLER_PATH = "/sell/news-sentiment"
 PRICE_ATOMIC = 30_000  # 0.03 AUSD (6 decimals)
+PAYOUT_SETTING_NAME = "SELLER_PAYTO_NEWS"   # .env variable holding this seller's payout address
 DESCRIPTION = "News sentiment (demo vendor): GDELT 24h headlines, tone trend and event flags for an asset or ticker"
 
 # ─── parameters ──────────────────────────────────────────────────────────────
@@ -64,6 +69,21 @@ CRYPTO_SEARCH_TERMS: dict[str, list[str]] = {
     "AVAX": ["AVAX"],
     "LINK": ["chainlink"],
     "BNB": ["BNB"],
+}
+
+# Common watchlist equities are searched by ticker OR company name, because headlines
+# usually name the company ("Nvidia"), not the ticker. Other tickers are searched as given.
+EQUITY_SEARCH_TERMS: dict[str, list[str]] = {
+    "NVDA": ["NVDA", "Nvidia"],
+    "AAPL": ["AAPL", "Apple Inc"],
+    "MSFT": ["MSFT", "Microsoft"],
+    "TSLA": ["TSLA", "Tesla"],
+    "AMZN": ["AMZN", "Amazon"],
+    "GOOGL": ["GOOGL", "Alphabet"],
+    "META": ["META", "Meta Platforms"],
+    "AMD": ["AMD"],
+    "COIN": ["Coinbase"],
+    "MSTR": ["MSTR", "MicroStrategy"],
 }
 
 # ─── tone rules ──────────────────────────────────────────────────────────────
@@ -103,16 +123,21 @@ TONE_CONFIDENCE_BONUS = 0.2      # tone trend available
 DATA_DELAY = "GDELT updates every 15 minutes; window = last 24 h"
 PROVIDER_GDELT = "gdelt"
 PROVIDER_CONTEXT_DEV = "context.dev"
+SUMMARY_METHOD_TEMPLATE = "template"
+SUMMARY_METHOD_PLUGGED = "plugged_summarizer"
+
+logger = logging.getLogger(__name__)
 
 
 def make_offer() -> SellerOffer:
-    """What this demo vendor charges (0.03 AUSD) and where the AUSD goes (SELLER_PAYTO_NEWS)."""
+    """What this demo vendor charges (0.03 AUSD) and where the AUSD goes (SELLER_PAYTO_NEWS).
+    Raises SellerConfigError if that address is empty or invalid."""
     return SellerOffer(
         seller_id=SELLER_ID,
         path=SELLER_PATH,
         description=DESCRIPTION,
         price_atomic=PRICE_ATOMIC,
-        pay_to=get_settings().seller_payto_news,
+        pay_to=require_payout_address(get_settings().seller_payto_news, PAYOUT_SETTING_NAME),
     )
 
 
@@ -156,8 +181,14 @@ def parse_query_param(params: dict) -> str:
 
 
 def search_terms_for(query: str) -> list[str]:
-    """Known crypto tickers become their names (BTC → bitcoin); anything else is searched as given."""
-    return CRYPTO_SEARCH_TERMS.get(query.upper(), [query])
+    """
+    Known crypto tickers become their names (BTC → bitcoin), known equity tickers become
+    ticker OR company name (NVDA → NVDA, Nvidia); anything else is searched as given.
+    """
+    symbol = query.upper()
+    if symbol in CRYPTO_SEARCH_TERMS:
+        return CRYPTO_SEARCH_TERMS[symbol]
+    return EQUITY_SEARCH_TERMS.get(symbol, [query])
 
 
 # ─── tone ────────────────────────────────────────────────────────────────────
@@ -257,9 +288,8 @@ def _tone_sentence(tone: ToneTrend | None) -> str:
 
 def summarize(headlines: list[Headline], tone: ToneTrend | None, flags: list[str], *, subject: str = "") -> str:
     """
-    Plain-language summary. HOOK: an LLM phrasing step may replace this template later,
-    but it must only rephrase these facts (counts, tone numbers, flags), never add numbers.
-    Deterministic: the same inputs always give the same text.
+    Default plain-language summary (deterministic template): the same inputs always
+    give the same text. A plugged-in summarizer may rephrase these facts, never add numbers.
     """
     about = f" about {subject}" if subject else ""
     parts = [f"{len(headlines)} recent headline(s){about} in the last 24h.", _tone_sentence(tone)]
@@ -269,7 +299,64 @@ def summarize(headlines: list[Headline], tone: ToneTrend | None, flags: list[str
     return " ".join(parts)
 
 
-# ─── response ────────────────────────────────────────────────────────────────
+# An optional async phrasing step: (headlines, tone, flags) → text. Registered by the app.
+Summarizer = Callable[[list[Headline], ToneTrend | None, list[str]], Awaitable[str]]
+_plugged_summarizer: Summarizer | None = None
+
+
+def set_summarizer(summarizer: Summarizer | None) -> None:
+    """Plug in an LLM phrasing step (or pass None to go back to the template)."""
+    global _plugged_summarizer
+    _plugged_summarizer = summarizer
+
+
+async def summary_for(
+    headlines: list[Headline], tone: ToneTrend | None, flags: list[str], subject: str
+) -> tuple[str, str]:
+    """
+    (summary text, summary_method). Uses the plugged-in summarizer when there is one and
+    it returns non-empty text; on any error or empty text, the template is used instead.
+    """
+    template = summarize(headlines, tone, flags, subject=subject)
+    if _plugged_summarizer is None:
+        return template, SUMMARY_METHOD_TEMPLATE
+    try:
+        text = (await _plugged_summarizer(headlines, tone, flags)).strip()
+    except Exception as exc:  # an optional phrasing step must never fail a paid call
+        logger.warning("news summarizer failed, using template: %s", type(exc).__name__)
+        return template, SUMMARY_METHOD_TEMPLATE
+    if not text:
+        return template, SUMMARY_METHOD_TEMPLATE
+    return text, SUMMARY_METHOD_PLUGGED
+
+
+# ─── analysis + response ─────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class NewsRead:
+    """Everything computed from the fetched data, before it is turned into JSON."""
+
+    headlines: list[Headline]
+    tone: ToneTrend | None
+    flag_headlines: dict[str, list[str]]   # flag → example headlines that triggered it
+
+    @property
+    def flags(self) -> list[str]:
+        """Flag names in the fixed order of EVENT_FLAG_PATTERNS."""
+        return list(self.flag_headlines)
+
+
+def analyze(
+    articles: list[Article], tone_points: list[TonePoint], search_results: list[SearchResult]
+) -> NewsRead:
+    """Merge headlines, compute the tone trend, and detect event flags over all titles."""
+    titles = [article.title for article in articles] + [result.title for result in search_results]
+    return NewsRead(
+        headlines=merge_headlines(articles, search_results),
+        tone=tone_trend(tone_points),
+        flag_headlines=detect_event_flags(titles),
+    )
+
 
 def confidence_for(article_count: int, tone: ToneTrend | None) -> float:
     """
@@ -283,44 +370,52 @@ def confidence_for(article_count: int, tone: ToneTrend | None) -> float:
     return BASE_CONFIDENCE + COVERAGE_CONFIDENCE_WEIGHT * coverage + bonus
 
 
+@dataclass(frozen=True)
+class FetchedNews:
+    """Raw inputs from the providers, plus the reason for each provider that failed."""
+
+    gdelt_query: str
+    articles: list[Article]
+    tone_points: list[TonePoint]
+    search_results: list[SearchResult]
+    errors: dict[str, str]
+
+
 def build_response(
     query: str,
-    gdelt_query: str,
-    articles: list[Article],
-    tone_points: list[TonePoint],
-    search_results: list[SearchResult],
-    errors: dict[str, str],
+    fetched: FetchedNews,
+    read: NewsRead,
+    summary: str,
+    summary_method: str,
     now: datetime,
 ) -> dict:
-    """Assemble the JSON body from already-fetched data (pure, so tests can use fixtures)."""
-    headlines = merge_headlines(articles, search_results)
-    tone = tone_trend(tone_points)
-    flag_examples = detect_event_flags([a.title for a in articles] + [r.title for r in search_results])
-    flags = list(flag_examples)
+    """Assemble the JSON body from already-computed pieces (pure, so tests can use fixtures)."""
+    tone = read.tone
     return {
         "seller_id": SELLER_ID,
         "query": query,
-        "headlines": [asdict(headline) for headline in headlines],
-        "article_count": len(articles),
+        "headlines": [asdict(headline) for headline in read.headlines],
+        "article_count": len(fetched.articles),
         "tone": asdict(tone) if tone else None,
         "tone_delta": tone.tone_delta if tone else None,
-        "event_flags": flags,
-        "event_flag_headlines": flag_examples,
-        "summary": summarize(headlines, tone, flags, subject=query),
+        "event_flags": read.flags,
+        "event_flag_headlines": read.flag_headlines,
+        "summary": summary,
+        "summary_method": summary_method,
         "method": (
             "GDELT DOC 2.0 artlist + timelinetone (24h, English sources); tone_delta = mean tone of the "
             "second half of the window − first half (0.0 buckets = no coverage, excluded); event flags = "
-            "keyword rules over headlines; summary = deterministic template"
+            "keyword rules over headlines; numbers and flags computed in code"
         ),
         "inputs_used": {
-            "gdelt_query": gdelt_query,
-            "gdelt_articles": len(articles),
-            "gdelt_tone_buckets": len(tone_points),
-            "context_dev_results": len(search_results),
-            "errors": errors,
+            "gdelt_query": fetched.gdelt_query,
+            "gdelt_articles": len(fetched.articles),
+            "gdelt_tone_buckets": len(fetched.tone_points),
+            "context_dev_results": len(fetched.search_results),
+            "errors": fetched.errors,
         },
         "computed_at": now.isoformat(timespec="seconds"),
-        "confidence": confidence_for(len(articles), tone),
+        "confidence": confidence_for(len(fetched.articles), tone),
         "data_delay": DATA_DELAY,
     }
 
@@ -329,19 +424,22 @@ def build_response(
 
 _T = TypeVar("_T")
 
+# Failures of one provider that should be recorded, not fail the whole call.
+# ValueError covers a malformed JSON body (json.JSONDecodeError is a ValueError).
+RECOVERABLE_UPSTREAM_ERRORS = (UpstreamError, GdeltError, ValueError)
+
 
 async def _fetch_or_error(name: str, call: Awaitable[list[_T]], errors: dict[str, str]) -> list[_T]:
     """Await one upstream call; on failure record the reason under `name` and return []."""
     try:
         return await call
-    except (UpstreamError, GdeltError) as exc:
+    except RECOVERABLE_UPSTREAM_ERRORS as exc:
         errors[name] = str(exc)
         return []
 
 
-async def compute(params: dict) -> dict:
-    """Fetch GDELT (and Context.dev if configured), then build the sentiment read."""
-    query = parse_query_param(params)
+async def fetch_news(query: str) -> FetchedNews:
+    """GDELT headlines + tone (and Context.dev results when a key is configured)."""
     gdelt_query = gdelt.build_query(search_terms_for(query))
     errors: dict[str, str] = {}
     articles = await _fetch_or_error("gdelt_artlist", gdelt.fetch_articles(gdelt_query), errors)
@@ -350,8 +448,20 @@ async def compute(params: dict) -> dict:
     api_key = get_settings().context_dev_api_key
     if api_key:
         search_results = await _fetch_or_error("context_dev", contextdev.search_news(query, api_key), errors)
-    if not articles and not tone_points and not search_results and errors:
-        raise UpstreamError(PROVIDER_GDELT, f"no news source answered: {errors}")
-    return build_response(
-        query, gdelt_query, articles, tone_points, search_results, errors, datetime.now(timezone.utc)
-    )
+    return FetchedNews(gdelt_query, articles, tone_points, search_results, errors)
+
+
+async def compute(params: dict) -> dict:
+    """
+    Fetch the news, analyze it and phrase a summary.
+
+    Raises ValueError for a bad `q` (buyer error → 400, no settlement) and UpstreamError
+    when every provider failed (nothing to sell).
+    """
+    query = parse_query_param(params)
+    fetched = await fetch_news(query)
+    if not fetched.articles and not fetched.tone_points and not fetched.search_results and fetched.errors:
+        raise UpstreamError(PROVIDER_GDELT, f"no news source answered: {fetched.errors}")
+    read = analyze(fetched.articles, fetched.tone_points, fetched.search_results)
+    summary, summary_method = await summary_for(read.headlines, read.tone, read.flags, query)
+    return build_response(query, fetched, read, summary, summary_method, datetime.now(timezone.utc))

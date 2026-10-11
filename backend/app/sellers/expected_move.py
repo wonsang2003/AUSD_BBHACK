@@ -28,6 +28,9 @@ All option math comes from `app/sellers/optionmath.py`. Every response carries
 `inputs_used`, `computed_at`, `method`, `confidence` (0–1) and `data_delay`. A failed
 request returns {"error": "...", "error_kind": "..."} — the x402 server should not settle
 a payment for a response that contains "error".
+
+The small helpers shared by the options demo vendors (`require_payout_address`,
+`error_response`, `iso_utc`, `utc_now`) are public here and reused by `pm_edge.py`.
 """
 
 from __future__ import annotations
@@ -81,12 +84,8 @@ EQUITY_METHOD = (
     "S·σ_ATM·√T with σ_ATM = ATM impliedVolatility; P(S_T>K) = N(d2), r = 0"
 )
 
-# Confidence (0–1): how much the numbers can be trusted, from how σ was obtained.
-CRYPTO_CONFIDENCE_BY_VOL_METHOD = {
-    deribit.VOL_LISTED: 0.9,          # σ read straight off the requested expiry
-    deribit.VOL_INTERPOLATED: 0.8,    # σ interpolated between two listed expiries
-    deribit.VOL_FLAT: 0.6,            # outside the listed range, nearest σ held flat
-}
+# Confidence (0–1): crypto answers take `deribit.CONFIDENCE_BY_VOL_METHOD` (how σ was
+# obtained); equity answers start lower because the source is unofficial and delayed.
 EQUITY_BASE_CONFIDENCE = 0.6          # unofficial, delayed source
 EQUITY_LAST_TRADE_PENALTY = 0.15      # ATM priced from last trades, not a live bid/ask
 EQUITY_NO_SIGMA_PENALTY = 0.2         # yfinance IV unusable: only the straddle move is reported
@@ -117,7 +116,7 @@ class EquityDataError(ValueError):
 
 # ─── offer ────────────────────────────────────────────────────────────────────
 
-def _require_payout_address(value: str, setting_name: str) -> str:
+def require_payout_address(value: str, setting_name: str) -> str:
     """Checksummed payout address, or SellerConfigError naming the setting to fill in."""
     if not value:
         raise SellerConfigError(f"{setting_name} is empty: set it in .env to this seller's payout address")
@@ -128,7 +127,7 @@ def _require_payout_address(value: str, setting_name: str) -> str:
 
 def make_offer() -> SellerOffer:
     """The x402 offer: 0.05 AUSD per call, paid to settings.seller_payto_expected_move."""
-    pay_to = _require_payout_address(get_settings().seller_payto_expected_move, PAYOUT_SETTING_NAME)
+    pay_to = require_payout_address(get_settings().seller_payto_expected_move, PAYOUT_SETTING_NAME)
     return SellerOffer(
         seller_id=SELLER_ID,
         path=OFFER_PATH,
@@ -201,7 +200,7 @@ def parse_request(params: dict) -> ExpectedMoveRequest:
 
 # ─── shared response pieces ──────────────────────────────────────────────────
 
-def _iso(moment: datetime) -> str:
+def iso_utc(moment: datetime) -> str:
     """ISO-8601 in UTC with seconds, e.g. "2026-10-11T12:00:00+00:00"."""
     return moment.astimezone(timezone.utc).isoformat(timespec="seconds")
 
@@ -234,7 +233,7 @@ def _time_fields(now: datetime, expiry: datetime) -> dict:
     """Expiry instant, T in years (ACT/365) and the same T in days."""
     t_years = year_fraction(now, expiry)
     return {
-        "expiry": _iso(expiry),
+        "expiry": iso_utc(expiry),
         "t_years": round(t_years, YEARS_DECIMALS),
         "days_to_expiry": round(t_years * DAYS_PER_YEAR, DAYS_DECIMALS),
     }
@@ -246,7 +245,7 @@ def error_response(params: dict, message: str, kind: str, now: datetime, data_de
         "error": message,
         "error_kind": kind,
         "inputs_used": {"params": dict(params)},
-        "computed_at": _iso(now),
+        "computed_at": iso_utc(now),
         "method": "none (request failed)",
         "confidence": 0.0,
     }
@@ -314,15 +313,15 @@ def build_crypto_response(request: ExpectedMoveRequest, chain: OptionChain, now:
             "source": "deribit",
             "index_name": chain.index_name,
             "index_price": chain.index_price,
-            "index_as_of": _iso(chain.as_of),
+            "index_as_of": iso_utc(chain.as_of),
             "atm_instruments": [name for point in atm_vol.points for name in point.instruments],
             "options_in_chain": len(chain.quotes),
             "requested_expiry": request.expiry,
             "requested_strikes": list(request.strikes),
         },
-        "computed_at": _iso(now),
+        "computed_at": iso_utc(now),
         "method": CRYPTO_METHOD,
-        "confidence": CRYPTO_CONFIDENCE_BY_VOL_METHOD[atm_vol.method],
+        "confidence": deribit.CONFIDENCE_BY_VOL_METHOD[atm_vol.method],
         "data_delay": DERIBIT_DATA_DELAY,
     }
 
@@ -442,7 +441,7 @@ def build_equity_response(request: ExpectedMoveRequest, snapshot: dict, now: dat
             "requested_expiry": request.expiry,
             "requested_strikes": list(request.strikes),
         },
-        "computed_at": _iso(now),
+        "computed_at": iso_utc(now),
         "method": EQUITY_METHOD,
         "confidence": _equity_confidence(price_basis, sigma_atm),
         "data_delay": yfin.YFINANCE_DELAY_NOTE,
@@ -451,7 +450,7 @@ def build_equity_response(request: ExpectedMoveRequest, snapshot: dict, now: dat
 
 # ─── entry point (async, network) ────────────────────────────────────────────
 
-def _utc_now() -> datetime:
+def utc_now() -> datetime:
     """The current time in UTC (one place, so the whole response uses one clock reading)."""
     return datetime.now(timezone.utc)
 
@@ -474,6 +473,8 @@ async def _compute_equity(params: dict, request: ExpectedMoveRequest, now: datet
     try:
         snapshot = await yfin.fetch_option_snapshot(request.asset, request.expiry, now, MIN_HOURS_TO_EXPIRY)
         return build_equity_response(request, snapshot, now)
+    except yfin.ExpiryNotListedError as exc:
+        return error_response(params, str(exc), ERROR_BAD_REQUEST, now, yfin.YFINANCE_DELAY_NOTE)
     except yfin.YFinanceError as exc:
         return error_response(params, str(exc), ERROR_UPSTREAM, now, yfin.YFINANCE_DELAY_NOTE)
     except EquityDataError as exc:
@@ -481,12 +482,16 @@ async def _compute_equity(params: dict, request: ExpectedMoveRequest, now: datet
 
 
 async def compute(params: dict) -> dict:
+    """Answer one paid request now (the x402 server calls this); see `compute_at`."""
+    return await compute_at(params, utc_now())
+
+
+async def compute_at(params: dict, now: datetime) -> dict:
     """
-    Answer one paid request. BTC/ETH/SOL go to Deribit, anything else is treated as a US
-    equity ticker and goes to yfinance. Never raises for bad input or upstream failure:
+    Answer one request as of `now`. BTC/ETH/SOL go to Deribit, anything else is treated as
+    a US equity ticker and goes to yfinance. Never raises for bad input or upstream failure:
     those come back as {"error", "error_kind", ...} with confidence 0.
     """
-    now = _utc_now()
     try:
         request = parse_request(params)
     except ExpectedMoveInputError as exc:

@@ -15,6 +15,11 @@ which are the slow and credit-hungry parts. The `/v1/web/answers` research endpo
 (which has an explicit `mode: fast|ultra`) is not used at all.
 
 The API key goes only into the Authorization header and is never logged.
+
+UNVERIFIED SHAPE: the request/response shape above could not be checked against live
+docs from the build container. The parser therefore accepts the result list under
+either "results" or "data", and any failure is recorded by the seller as an input
+error rather than failing the purchase. Verify with a real key on a networked machine.
 """
 
 from __future__ import annotations
@@ -29,6 +34,7 @@ SOURCE_NAME = "contextdev"
 
 # The API accepts 10–100 results; 10 is the minimum and the cheapest.
 SEARCH_NUM_RESULTS = 10
+RESULT_LIST_KEYS = ("results", "data")   # where the result list may live in the response
 SEARCH_FRESHNESS = "last_24_hours"
 SEARCH_CACHE_TTL_SECONDS = 300.0
 
@@ -54,10 +60,19 @@ def _domain_of(url: str) -> str:
     return host.removeprefix("www.")
 
 
+def _result_list(payload: dict) -> list[dict]:
+    """The first list found under RESULT_LIST_KEYS, or [] if there is none."""
+    for key in RESULT_LIST_KEYS:
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+    return []
+
+
 def parse_search_results(payload: dict) -> list[SearchResult]:
-    """Parse the `results` array; results without a title or URL are skipped."""
+    """Parse the result list; results without a title or URL are skipped."""
     parsed: list[SearchResult] = []
-    for raw in payload.get("results", []):
+    for raw in _result_list(payload):
         title = str(raw.get("title") or "").strip()
         url = str(raw.get("url") or "").strip()
         if not title or not url:

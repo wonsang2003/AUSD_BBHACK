@@ -15,7 +15,11 @@ GDELT quirks this module handles on purpose:
     JSON — so we download text and decode it ourselves (`decode_gdelt_body`).
   * GDELT asks callers to send **at most one request every 5 seconds**. The shared HTTP
     helper spaces "gdelt" requests by only 1 s, so this module adds its own 5-second
-    slot (`_wait_for_gdelt_slot`) in front of every request it makes.
+    slot (`_wait_for_gdelt_slot`) in front of every request it makes. Decoded answers
+    are cached here for 5 minutes and a cache hit skips the slot entirely, so repeat
+    buyers of the same query do not wait.
+  * Headlines sometimes contain raw control characters, which strict JSON rejects, so
+    bodies are decoded with `strict=False`.
   * A query with no matches returns `{}`; that parses to an empty list, not an error.
 
 Tone is GDELT's average document tone (roughly −10 very negative … +10 very positive).
@@ -47,6 +51,7 @@ GDELT_CACHE_TTL_SECONDS = 300.0
 
 _gdelt_slot_lock = asyncio.Lock()
 _last_gdelt_request_at = 0.0
+_decoded_cache: dict[str, tuple[float, dict]] = {}   # request key → (expires at, decoded body)
 
 
 class GdeltError(Exception):
@@ -102,7 +107,7 @@ def decode_gdelt_body(text: str) -> dict:
     that is not a JSON object raises GdeltError carrying the first 200 characters.
     """
     try:
-        decoded = json.loads(text)
+        decoded = json.loads(text, strict=False)
     except json.JSONDecodeError as exc:
         raise GdeltError(f"non-JSON response: {text.strip()[:200]!r}") from exc
     if not isinstance(decoded, dict):
@@ -163,14 +168,33 @@ async def _wait_for_gdelt_slot() -> None:
         _last_gdelt_request_at = time.monotonic()
 
 
+def clear_cache() -> None:
+    """Forget decoded GDELT answers (used by tests)."""
+    _decoded_cache.clear()
+
+
+def _cache_key(params: dict[str, Any]) -> str:
+    """Stable key for one request: its query parameters, sorted."""
+    return json.dumps(params, sort_keys=True, default=str)
+
+
 async def _fetch_mode(query: str, mode: str, timespan: str, extra_params: dict[str, Any] | None = None) -> dict:
-    """Fetch one GDELT mode as text (errors are text) and decode it."""
+    """
+    Fetch one GDELT mode as text (errors are text) and decode it.
+    A fresh cached answer is returned without waiting for a request slot.
+    """
     params: dict[str, Any] = _request_params(query, mode, timespan)
     if extra_params:
         params.update(extra_params)
+    key = _cache_key(params)
+    cached = _decoded_cache.get(key)
+    if cached is not None and cached[0] > time.monotonic():
+        return cached[1]
     await _wait_for_gdelt_slot()
     text = await get_text(GDELT_DOC_URL, source=SOURCE_NAME, params=params, ttl=GDELT_CACHE_TTL_SECONDS)
-    return decode_gdelt_body(text)
+    decoded = decode_gdelt_body(text)
+    _decoded_cache[key] = (time.monotonic() + GDELT_CACHE_TTL_SECONDS, decoded)
+    return decoded
 
 
 async def fetch_articles(
