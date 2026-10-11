@@ -142,7 +142,7 @@ class Recharger:
     def __init__(
         self,
         *,
-        controller: BudgetControllerClient,
+        controller: BudgetControllerClient | None,
         token: AusdClient,
         relayer: TxSender,
         engine: Engine,
@@ -160,10 +160,16 @@ class Recharger:
         self.alerts = alerts
         self._chain_time = chain_time or token.chain_timestamp
 
+    def _require_controller(self) -> BudgetControllerClient:
+        """The controller client; RuntimeError when none is configured (sweeps work without one)."""
+        if self.controller is None:
+            raise RuntimeError("BudgetController not configured (BUDGET_CONTROLLER_ADDRESS)")
+        return self.controller
+
     # ─── session start ───────────────────────────────────────────────────
     def session_start(self, owner: str, allocations: Sequence[Allocation], agents: Mapping[str, str]) -> list[dict]:
         """PERMIT mode: top every agent up to its allocation. VOUCHER mode: redeem today's voucher."""
-        budget = self.controller.budget(owner)
+        budget = self._require_controller().budget(owner)
         if is_voucher_mode(budget.mode):
             return self.redeem_today_voucher(owner, allocations, agents)
         balances = {name: self.token.balance_of(agents[name]) for name in agents}
@@ -186,7 +192,7 @@ class Recharger:
         threshold: float = DEFAULT_REFILL_VALUE_THRESHOLD,
     ) -> list[dict]:
         """Intraday refills per recharge_policy.intraday_refill (PERMIT mode only)."""
-        if is_voucher_mode(self.controller.budget(owner).mode):
+        if is_voucher_mode(self._require_controller().budget(owner).mode):
             return []
         done: list[dict] = []
         for allocation in allocations:

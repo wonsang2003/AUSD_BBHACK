@@ -15,6 +15,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import type { Address } from "viem";
 import { useAccount } from "wagmi";
 
 import { QUERY_KEYS } from "@/components/dashboard/useDashboardData";
@@ -22,7 +23,6 @@ import { Card } from "@/components/ui/Card";
 import { getConfig, getSettings, getState, listVouchers, saveSettings } from "@/lib/api";
 import { AGENT_NAMES } from "@/lib/constants";
 import { AUSD_ADDRESS } from "@/lib/env";
-import type { Address } from "viem";
 
 import { BudgetControls } from "./BudgetControls";
 import { BudgetForm } from "./BudgetForm";
