@@ -33,7 +33,8 @@ import math
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, time as clock_time, timedelta, timezone
+from datetime import datetime, timedelta, timezone
+from datetime import time as clock_time
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -268,7 +269,7 @@ async def fetch_option_snapshot(
         )
     except YFinanceError:
         raise
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:   # asyncio.wait_for raises the builtin TimeoutError (3.11+)
         raise YFinanceError(f"yfinance timed out after {YFINANCE_TIMEOUT_SECONDS:g} s") from exc
     except Exception as exc:  # yfinance raises many exception types; all mean "no data"
         raise YFinanceError(f"yfinance failed: {type(exc).__name__}: {exc}") from exc

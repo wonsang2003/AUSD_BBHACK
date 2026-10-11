@@ -18,5 +18,9 @@ gate-m2:            ## M2 gate: one real x402 payment, agent -> demo vendor, on 
 gate-m2-perps:      ## same gate, buying from the perps demo vendor (Hyperliquid data) instead of Deribit
 	cd backend && uv run python -m scripts.gate_m2 --seller perps
 
+gate-m2-status:     ## show the recorded M2 payment (tx hash + Basescan link), or say M2 has not passed
+	@cat backend/gate_m2_result.json 2>/dev/null \
+		|| echo "M2 NOT PASSED: no backend/gate_m2_result.json yet. Run 'make gate-m2' (or 'make gate-m2-perps')."
+
 bootstrap:          ## create testnet wallets in .env (addresses printed, keys never printed) + on-chain checks
 	cd backend && uv run python -m scripts.bootstrap

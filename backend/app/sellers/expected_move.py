@@ -35,6 +35,7 @@ The small helpers shared by the options demo vendors (`require_payout_address`,
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -462,6 +463,9 @@ async def _compute_crypto(params: dict, request: ExpectedMoveRequest, now: datet
         return build_crypto_response(request, chain, now)
     except UpstreamError as exc:
         return error_response(params, str(exc), ERROR_UPSTREAM, now, DERIBIT_DATA_DELAY)
+    except json.JSONDecodeError as exc:
+        message = f"Deribit sent a response that is not JSON: {exc}"
+        return error_response(params, message, ERROR_UPSTREAM, now, DERIBIT_DATA_DELAY)
     except ExpectedMoveInputError as exc:
         return error_response(params, str(exc), ERROR_BAD_REQUEST, now, DERIBIT_DATA_DELAY)
     except deribit.DeribitDataError as exc:

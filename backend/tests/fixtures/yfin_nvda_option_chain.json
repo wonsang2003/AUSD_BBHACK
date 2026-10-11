@@ -1,0 +1,317 @@
+{
+ "ticker": "NVDA",
+ "spot": 187.62,
+ "expiries": [
+  "2026-10-16",
+  "2026-10-23",
+  "2026-10-30",
+  "2026-11-20",
+  "2026-12-18"
+ ],
+ "expiry": "2026-10-16",
+ "calls": [
+  {
+   "contractSymbol": "NVDA261016C00170000",
+   "strike": 170.0,
+   "lastPrice": 17.79,
+   "bid": 17.58,
+   "ask": 17.85,
+   "volume": 212.0,
+   "openInterest": 1270.0,
+   "impliedVolatility": 0.4866
+  },
+  {
+   "contractSymbol": "NVDA261016C00172500",
+   "strike": 172.5,
+   "lastPrice": 15.37,
+   "bid": 15.19,
+   "ask": 15.42,
+   "volume": 321.0,
+   "openInterest": 1677.0,
+   "impliedVolatility": 0.4831
+  },
+  {
+   "contractSymbol": "NVDA261016C00175000",
+   "strike": 175.0,
+   "lastPrice": 13.03,
+   "bid": 12.88,
+   "ask": 13.07,
+   "volume": 488.0,
+   "openInterest": 2214.0,
+   "impliedVolatility": 0.4799
+  },
+  {
+   "contractSymbol": "NVDA261016C00177500",
+   "strike": 177.5,
+   "lastPrice": 10.79,
+   "bid": 10.67,
+   "ask": 10.83,
+   "volume": 740.0,
+   "openInterest": 2923.0,
+   "impliedVolatility": 0.4772
+  },
+  {
+   "contractSymbol": "NVDA261016C00180000",
+   "strike": 180.0,
+   "lastPrice": 8.71,
+   "bid": 8.61,
+   "ask": 8.74,
+   "volume": 1123.0,
+   "openInterest": 3859.0,
+   "impliedVolatility": 0.4749
+  },
+  {
+   "contractSymbol": "NVDA261016C00182500",
+   "strike": 182.5,
+   "lastPrice": 6.82,
+   "bid": 6.75,
+   "ask": 6.85,
+   "volume": 1703.0,
+   "openInterest": 5095.0,
+   "impliedVolatility": 0.4729
+  },
+  {
+   "contractSymbol": "NVDA261016C00185000",
+   "strike": 185.0,
+   "lastPrice": 5.17,
+   "bid": 5.11,
+   "ask": 5.19,
+   "volume": 2584.0,
+   "openInterest": 6726.0,
+   "impliedVolatility": 0.4713
+  },
+  {
+   "contractSymbol": "NVDA261016C00187500",
+   "strike": 187.5,
+   "lastPrice": 3.79,
+   "bid": 3.74,
+   "ask": 3.8,
+   "volume": 3920.0,
+   "openInterest": 8880.0,
+   "impliedVolatility": 0.4701
+  },
+  {
+   "contractSymbol": "NVDA261016C00190000",
+   "strike": 190.0,
+   "lastPrice": 2.67,
+   "bid": 2.64,
+   "ask": 2.68,
+   "volume": 2690.0,
+   "openInterest": 6908.0,
+   "impliedVolatility": 0.4691
+  },
+  {
+   "contractSymbol": "NVDA261016C00192500",
+   "strike": 192.5,
+   "lastPrice": 1.81,
+   "bid": 1.79,
+   "ask": 1.82,
+   "volume": 1773.0,
+   "openInterest": 5233.0,
+   "impliedVolatility": 0.4685
+  },
+  {
+   "contractSymbol": "NVDA261016C00195000",
+   "strike": 195.0,
+   "lastPrice": 1.18,
+   "bid": 1.16,
+   "ask": 1.18,
+   "volume": 1169.0,
+   "openInterest": 3963.0,
+   "impliedVolatility": 0.4683
+  },
+  {
+   "contractSymbol": "NVDA261016C00197500",
+   "strike": 197.5,
+   "lastPrice": 0.74,
+   "bid": 0.73,
+   "ask": 0.75,
+   "volume": 770.0,
+   "openInterest": 3002.0,
+   "impliedVolatility": 0.4683
+  },
+  {
+   "contractSymbol": "NVDA261016C00200000",
+   "strike": 200.0,
+   "lastPrice": 0.44,
+   "bid": 0.43,
+   "ask": 0.45,
+   "volume": 508.0,
+   "openInterest": 2274.0,
+   "impliedVolatility": 0.4686
+  },
+  {
+   "contractSymbol": "NVDA261016C00202500",
+   "strike": 202.5,
+   "lastPrice": 0.26,
+   "bid": 0.25,
+   "ask": 0.27,
+   "volume": 334.0,
+   "openInterest": 1722.0,
+   "impliedVolatility": 0.4691
+  },
+  {
+   "contractSymbol": "NVDA261016C00205000",
+   "strike": 205.0,
+   "lastPrice": 0.14,
+   "bid": 0.13,
+   "ask": 0.15,
+   "volume": null,
+   "openInterest": 1304.0,
+   "impliedVolatility": 1e-05
+  }
+ ],
+ "puts": [
+  {
+   "contractSymbol": "NVDA261016P00170000",
+   "strike": 170.0,
+   "lastPrice": 0.1,
+   "bid": 0.09,
+   "ask": 0.11,
+   "volume": null,
+   "openInterest": 1270.0,
+   "impliedVolatility": 0.4866
+  },
+  {
+   "contractSymbol": "NVDA261016P00172500",
+   "strike": 172.5,
+   "lastPrice": 0.19,
+   "bid": 0.18,
+   "ask": 0.2,
+   "volume": 321.0,
+   "openInterest": 1677.0,
+   "impliedVolatility": 0.4831
+  },
+  {
+   "contractSymbol": "NVDA261016P00175000",
+   "strike": 175.0,
+   "lastPrice": 0.36,
+   "bid": 0.35,
+   "ask": 0.37,
+   "volume": 488.0,
+   "openInterest": 2214.0,
+   "impliedVolatility": 0.4799
+  },
+  {
+   "contractSymbol": "NVDA261016P00177500",
+   "strike": 177.5,
+   "lastPrice": 0.63,
+   "bid": 0.62,
+   "ask": 0.64,
+   "volume": 740.0,
+   "openInterest": 2923.0,
+   "impliedVolatility": 0.4772
+  },
+  {
+   "contractSymbol": "NVDA261016P00180000",
+   "strike": 180.0,
+   "lastPrice": 1.06,
+   "bid": 1.04,
+   "ask": 1.06,
+   "volume": 1123.0,
+   "openInterest": 3859.0,
+   "impliedVolatility": 0.4749
+  },
+  {
+   "contractSymbol": "NVDA261016P00182500",
+   "strike": 182.5,
+   "lastPrice": 1.68,
+   "bid": 1.66,
+   "ask": 1.69,
+   "volume": 1703.0,
+   "openInterest": 5095.0,
+   "impliedVolatility": 0.4729
+  },
+  {
+   "contractSymbol": "NVDA261016P00185000",
+   "strike": 185.0,
+   "lastPrice": 2.54,
+   "bid": 2.51,
+   "ask": 2.55,
+   "volume": 2584.0,
+   "openInterest": 6726.0,
+   "impliedVolatility": 0.4713
+  },
+  {
+   "contractSymbol": "NVDA261016P00187500",
+   "strike": 187.5,
+   "lastPrice": 3.67,
+   "bid": 3.63,
+   "ask": 3.68,
+   "volume": 3920.0,
+   "openInterest": 8880.0,
+   "impliedVolatility": 0.4701
+  },
+  {
+   "contractSymbol": "NVDA261016P00190000",
+   "strike": 190.0,
+   "lastPrice": 5.06,
+   "bid": 5.0,
+   "ask": 5.08,
+   "volume": 2690.0,
+   "openInterest": 6908.0,
+   "impliedVolatility": 0.4691
+  },
+  {
+   "contractSymbol": "NVDA261016P00192500",
+   "strike": 192.5,
+   "lastPrice": 6.71,
+   "bid": 6.63,
+   "ask": 6.73,
+   "volume": 1773.0,
+   "openInterest": 5233.0,
+   "impliedVolatility": 0.4685
+  },
+  {
+   "contractSymbol": "NVDA261016P00195000",
+   "strike": 195.0,
+   "lastPrice": 8.59,
+   "bid": 8.49,
+   "ask": 8.62,
+   "volume": 1169.0,
+   "openInterest": 3963.0,
+   "impliedVolatility": 0.4683
+  },
+  {
+   "contractSymbol": "NVDA261016P00197500",
+   "strike": 197.5,
+   "lastPrice": 10.66,
+   "bid": 10.54,
+   "ask": 10.7,
+   "volume": 770.0,
+   "openInterest": 3002.0,
+   "impliedVolatility": 0.4683
+  },
+  {
+   "contractSymbol": "NVDA261016P00200000",
+   "strike": 200.0,
+   "lastPrice": 12.87,
+   "bid": 12.73,
+   "ask": 12.92,
+   "volume": 508.0,
+   "openInterest": 2274.0,
+   "impliedVolatility": 0.4686
+  },
+  {
+   "contractSymbol": "NVDA261016P00202500",
+   "strike": 202.5,
+   "lastPrice": 15.2,
+   "bid": 15.02,
+   "ask": 15.25,
+   "volume": 334.0,
+   "openInterest": 1722.0,
+   "impliedVolatility": 0.4691
+  },
+  {
+   "contractSymbol": "NVDA261016P00205000",
+   "strike": 205.0,
+   "lastPrice": 17.59,
+   "bid": 17.39,
+   "ask": 17.65,
+   "volume": 220.0,
+   "openInterest": 1304.0,
+   "impliedVolatility": 0.47
+  }
+ ],
+ "fetched_at": "2026-10-12T18:30:00+00:00"
+}

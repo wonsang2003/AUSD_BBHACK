@@ -11,6 +11,8 @@ Every rule has its own reason string so failures are visible in the purchase fee
     nonce already used                 → "nonce already used"
     balance < value                    → "insufficient balance"
     payer or payTo on the freeze list  → "counterparty frozen"
+    freeze list could not be read      → "compliance check unavailable"  (fails closed)
+    authorization fields missing/wrong → "malformed authorization: ..."
 """
 
 from __future__ import annotations
@@ -21,11 +23,25 @@ from dataclasses import dataclass
 from eth_utils import to_checksum_address
 
 from app.chain.ausd import AusdClient
-from app.chain.eip712 import Authorization, build_transfer_with_authorization, recover_typed_data_signer
+from app.chain.eip712 import (
+    Authorization,
+    build_transfer_with_authorization,
+    recover_typed_data_signer,
+)
 from app.x402.models import PaymentPayload, PaymentRequirements
 
 # Refuse authorizations that expire within this many seconds: we still need time to settle.
 MIN_SECONDS_BEFORE_EXPIRY = 6
+
+
+def has_settlement_headroom(payment: PaymentPayload, now: int | None = None) -> bool:
+    """Rule: settle only while now + MIN_SECONDS_BEFORE_EXPIRY < validBefore (re-checked after compute)."""
+    now = int(time.time()) if now is None else now
+    try:
+        auth = Authorization.from_x402_json(payment.payload.authorization)
+    except (KeyError, ValueError, TypeError):
+        return False
+    return now + MIN_SECONDS_BEFORE_EXPIRY < auth.valid_before
 
 
 @dataclass(frozen=True)
@@ -53,7 +69,7 @@ class PaymentVerifier:
 
         try:
             auth = Authorization.from_x402_json(payment.payload.authorization)
-        except (KeyError, ValueError) as exc:
+        except (KeyError, ValueError, TypeError) as exc:
             return VerificationResult(False, f"malformed authorization: {exc}")
         payer = auth.from_address
 
@@ -77,6 +93,10 @@ class PaymentVerifier:
             return VerificationResult(False, "nonce already used", payer)
         if self.token.balance_of(payer) < auth.value:
             return VerificationResult(False, "insufficient balance", payer)
-        if self.token.is_account_frozen(payer) or self.token.is_account_frozen(auth.to):
+        try:
+            frozen = self.token.is_account_frozen(payer) or self.token.is_account_frozen(auth.to)
+        except Exception:  # noqa: BLE001 — RPC failure: never settle on an unanswered compliance check
+            return VerificationResult(False, "compliance check unavailable", payer)
+        if frozen:
             return VerificationResult(False, "counterparty frozen", payer)
         return VerificationResult(True, "", payer)

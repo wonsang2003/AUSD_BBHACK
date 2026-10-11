@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from eth_utils import to_checksum_address
 from web3 import Web3
+from web3.exceptions import BadFunctionCallOutput, ContractLogicError
 
 from app.chain.eip712 import Authorization
 from app.constants import AUSD_DECIMALS, AUSD_EIP712_NAME, AUSD_EIP712_VERSION
@@ -68,6 +69,11 @@ AUSD_ABI: list[dict] = [
 
 FAUCET_ABI: list[dict] = [_fn("requestFunds", [("recipient", "address")])]
 
+# ERC-3009 event emitted when an authorization executes: AuthorizationUsed(address indexed authorizer, bytes32 indexed nonce)
+AUTHORIZATION_USED_TOPIC = Web3.keccak(text="AuthorizationUsed(address,bytes32)").to_0x_hex()
+# How far back to search for that event: an authorization lives at most a few minutes (~2 s blocks on Base).
+AUTHORIZATION_LOG_LOOKBACK_BLOCKS = 1_000
+
 
 class AusdSpecMismatch(RuntimeError):
     """The on-chain token does not match the decimals / EIP-712 domain our signers assume."""
@@ -119,11 +125,35 @@ class AusdClient:
         return self.contract.functions.authorizationState(to_checksum_address(authorizer), _hex32(nonce)).call()
 
     def is_account_frozen(self, account: str) -> bool:
-        """Freeze-list check. If the token has no such method, treat the account as not frozen."""
+        """Freeze-list check (compliance).
+
+        Rule: a token WITHOUT the method (e.g. USDC: the call reverts or returns nothing) has no
+        freeze list, so the account is not frozen. Any other failure (RPC timeout, rate limit,
+        connection error) is raised: an unanswered check must never pass as "not frozen".
+        """
         try:
             return self.contract.functions.isAccountFrozen(to_checksum_address(account)).call()
-        except Exception:  # noqa: BLE001 — method absent on non-AUSD tokens
+        except (ContractLogicError, BadFunctionCallOutput):
             return False
+
+    def chain_timestamp(self) -> int:
+        """Timestamp of the latest block: the clock ERC-3009 validity windows are judged against."""
+        return int(self.w3.eth.get_block("latest")["timestamp"])
+
+    def find_authorization_tx(self, authorizer: str, nonce: str | bytes) -> str | None:
+        """Hash of the transaction that used (authorizer, nonce), from its AuthorizationUsed event; None if not found."""
+        latest = self.w3.eth.block_number
+        logs = self.w3.eth.get_logs({
+            "address": self.address,
+            "fromBlock": max(0, latest - AUTHORIZATION_LOG_LOOKBACK_BLOCKS),
+            "toBlock": latest,
+            "topics": [
+                AUTHORIZATION_USED_TOPIC,
+                "0x" + to_checksum_address(authorizer)[2:].lower().rjust(64, "0"),
+                "0x" + _hex32(nonce).hex(),
+            ],
+        })
+        return logs[-1]["transactionHash"].to_0x_hex() if logs else None
 
     def eth_balance(self, account: str) -> int:
         return self.w3.eth.get_balance(to_checksum_address(account))

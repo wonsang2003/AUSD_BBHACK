@@ -199,6 +199,8 @@ class OptionChain:
 
 def _rpc_result(payload: dict) -> Any:
     """Return the `result` of a Deribit JSON-RPC envelope; raise if it carries an error instead."""
+    if not isinstance(payload, dict):
+        raise DeribitDataError(f"Deribit payload is not a JSON object: {type(payload).__name__}")
     if "error" in payload:
         raise DeribitDataError(f"Deribit returned an error: {payload['error']}")
     if "result" not in payload:
@@ -208,7 +210,7 @@ def _rpc_result(payload: dict) -> Any:
 
 def response_time(payload: dict) -> datetime:
     """When Deribit sent this response: the envelope's `usOut` (µs since the epoch) as UTC."""
-    if "usOut" not in payload:
+    if not isinstance(payload, dict) or "usOut" not in payload:
         raise DeribitDataError("Deribit payload has no `usOut` timestamp")
     return datetime.fromtimestamp(payload["usOut"] / MICROSECONDS_PER_SECOND, tz=timezone.utc)
 

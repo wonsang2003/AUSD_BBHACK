@@ -18,7 +18,12 @@ from fastapi import FastAPI
 
 from app.agents.breaker import CircuitBreaker
 from app.chain.tokens import TokenInfo, TokenRegistry
-from app.constants import BASE_SEPOLIA_CAIP2, BASE_SEPOLIA_CHAIN_ID, HEADER_PAYMENT_REQUIRED, ONE_AUSD
+from app.constants import (
+    BASE_SEPOLIA_CAIP2,
+    BASE_SEPOLIA_CHAIN_ID,
+    HEADER_PAYMENT_REQUIRED,
+    ONE_AUSD,
+)
 from app.x402.client import PaymentError, X402Client
 from app.x402.models import PaymentRequired, decode_header
 from app.x402.offer import SellerOffer
@@ -142,10 +147,10 @@ async def test_replayed_payment_signature_is_rejected(vendor, mock_ausd, fund_au
     captured = {}
     original_get = client.http.get
 
-    async def capturing_get(url, params=None, headers=None):
+    async def capturing_get(url, params=None, headers=None, **kwargs):
         if headers:
             captured.update(headers)
-        return await original_get(url, params=params, headers=headers)
+        return await original_get(url, params=params, headers=headers, **kwargs)
 
     client.http.get = capturing_get
     await client.get(SELLER_URL)

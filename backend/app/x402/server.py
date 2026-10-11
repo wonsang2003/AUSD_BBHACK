@@ -5,8 +5,18 @@ endpoint that is sold per call for AUSD.
     GET <path>                       → 402 + PAYMENT-REQUIRED (what to pay, to whom, in which token)
     GET <path> + PAYMENT-SIGNATURE   → verify → compute → settle on-chain → 200 + data + PAYMENT-RESPONSE
 
-Data is returned ONLY after settlement succeeded (receipt status 1). Any failure returns
-402 with an `errorReason` so the buyer can see exactly why.
+Data is returned ONLY after settlement succeeded (receipt status 1). Order of a paid request:
+
+    verify → compute → render the JSON body → re-check the authorization has ≥ 6 s left → settle → 200
+
+Rendering BEFORE settling means a result that cannot be serialized is never charged.
+Responses for failures:
+    402 + PAYMENT-RESPONSE{errorReason}   definite failure, nothing was charged
+    502 {charged: false}                  the item could not be produced, nothing was charged
+    504 {charged: "unknown"}              settlement outcome unknown (no receipt yet); the buyer
+                                          resolves it on-chain via authorizationState
+
+Only x402 v2 (`PAYMENT-SIGNATURE`) is accepted; the legacy v1 `X-PAYMENT` header is not.
 
 In PocketDesk these endpoints are demo vendors: testnet stand-ins so the buyer-side
 agents have something real to pay for.
@@ -21,7 +31,7 @@ from collections.abc import Awaitable, Callable
 
 from fastapi import APIRouter, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from app.config import get_settings
 from app.constants import (
@@ -31,8 +41,6 @@ from app.constants import (
     HEADER_PAYMENT_REQUIRED,
     HEADER_PAYMENT_RESPONSE,
     HEADER_PAYMENT_SIGNATURE,
-    LEGACY_HEADER_PAYMENT,
-    LEGACY_HEADER_PAYMENT_RESPONSE,
 )
 from app.x402.models import (
     PaymentPayload,
@@ -44,6 +52,8 @@ from app.x402.models import (
     encode_header,
 )
 from app.x402.offer import SellerOffer
+from app.x402.settlement import SettlementUnknown
+from app.x402.verify import has_settlement_headroom
 
 log = logging.getLogger(__name__)
 
@@ -87,6 +97,30 @@ def _payment_required_response(resource: ResourceInfo, required: PaymentRequirem
     return JSONResponse(status_code=402, content=json.loads(body.model_dump_json(exclude_none=True)), headers=headers)
 
 
+def render_json_body(data: dict) -> bytes | None:
+    """The exact bytes FastAPI's JSONResponse would send, or None if `data` is not valid JSON (NaN, Decimal, ...)."""
+    try:
+        return json.dumps(data, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
+    except (TypeError, ValueError):
+        return None
+
+
+def _not_charged_response(error: str) -> JSONResponse:
+    """502: the seller could not produce the item, so the authorization is simply never settled."""
+    return JSONResponse(status_code=502, content={"error": error, "charged": False})
+
+
+def _settlement_unknown_response(exc: SettlementUnknown, network: str, payer: str | None) -> JSONResponse:
+    """504: the settlement may still execute. The buyer must check authorizationState, not assume failure."""
+    pending = SettlementResponse(success=False, transaction=exc.tx_hash, network=network, payer=payer,
+                                 errorReason=exc.reason)
+    return JSONResponse(
+        status_code=504,
+        content={"error": exc.reason, "charged": "unknown", "transaction": exc.tx_hash},
+        headers={HEADER_PAYMENT_RESPONSE: encode_header(pending)},
+    )
+
+
 def make_paid_router(
     offer: SellerOffer,
     compute: ComputeFn,
@@ -109,7 +143,9 @@ def make_paid_router(
     def _ensure_deps() -> None:
         if deps["verifier"] is not None and deps["settler"] is not None and deps["asset"]:
             return
-        from app.x402.wiring import default_seller_dependencies  # lazy: needs RPC + keys
+        from app.x402.wiring import (
+            default_seller_dependencies,  # lazy: needs RPC + keys
+        )
 
         built = default_seller_dependencies(network)
         deps["verifier"] = deps["verifier"] or built.verifier
@@ -123,7 +159,7 @@ def make_paid_router(
         token_address = deps["asset"] or asset or get_settings().ausd_address
         required = build_requirements(offer, token_address, network)
 
-        header = request.headers.get(HEADER_PAYMENT_SIGNATURE) or request.headers.get(LEGACY_HEADER_PAYMENT)
+        header = request.headers.get(HEADER_PAYMENT_SIGNATURE)
         if not header:
             return _payment_required_response(resource, required, "payment required")
 
@@ -141,14 +177,29 @@ def make_paid_router(
 
         cache_key = json.dumps(sorted(params.items()))
         data = cache.get(cache_key)
-        if data is None:
+        freshly_computed = data is None
+        if freshly_computed:
             data = await compute(params)
             if data.get("error"):
                 # Never charge for a failed computation: the authorization is simply not settled.
-                return JSONResponse(status_code=502, content={"error": data["error"], "charged": False})
-            cache.put(cache_key, data)
+                return _not_charged_response(data["error"])
+        body = render_json_body(data)
+        if body is None:
+            log.error("%s produced a result that is not valid JSON; not charging", offer.seller_id)
+            return _not_charged_response("seller produced a result that is not valid JSON")
+        if freshly_computed:
+            cache.put(cache_key, data)  # only renderable results are cached
 
-        settlement: SettlementResponse = await run_in_threadpool(deps["settler"].settle, payment, required)
+        if not has_settlement_headroom(payment):
+            expired = SettlementResponse(success=False, network=network, payer=verdict.payer,
+                                         errorReason="authorization expired during compute")
+            return _payment_required_response(resource, required, expired.errorReason, expired)
+
+        try:
+            settlement: SettlementResponse = await run_in_threadpool(deps["settler"].settle, payment, required)
+        except SettlementUnknown as exc:
+            log.warning("%s settlement outcome unknown: %s (tx %s)", offer.seller_id, exc.reason, exc.tx_hash)
+            return _settlement_unknown_response(exc, network, verdict.payer)
         if not settlement.success:
             return _payment_required_response(resource, required, settlement.errorReason, settlement)
 
@@ -158,7 +209,7 @@ def make_paid_router(
             except Exception:  # noqa: BLE001 — logging must never break a paid response
                 log.exception("on_settled hook failed")
 
-        encoded = encode_header(settlement)
-        return JSONResponse(content=data, headers={HEADER_PAYMENT_RESPONSE: encoded, LEGACY_HEADER_PAYMENT_RESPONSE: encoded})
+        return Response(content=body, media_type="application/json",
+                        headers={HEADER_PAYMENT_RESPONSE: encode_header(settlement)})
 
     return router

@@ -143,7 +143,9 @@ def verify_token(w3, token: TokenInfo) -> str | None:
         decimals = contract.functions.decimals().call()
         _, name, version, chain_id, verifying_contract, _, _ = contract.functions.eip712Domain().call()
     except Exception as exc:  # noqa: BLE001 — any RPC/ABI failure disables the entry
-        return f"on-chain check failed: {type(exc).__name__}: {exc}"
+        from app.chain.web3client import redact_urls  # local import: web3client is heavier and imports config
+
+        return f"on-chain check failed: {type(exc).__name__}: {redact_urls(str(exc))}"
     if decimals != token.decimals:
         return f"decimals {decimals} != expected {token.decimals}"
     if (name, version) != (token.eip712_name, token.eip712_version):
