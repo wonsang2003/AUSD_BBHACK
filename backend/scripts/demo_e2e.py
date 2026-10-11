@@ -52,8 +52,14 @@ class LateASGITransport(httpx.AsyncBaseTransport):
         return await self.inner.handle_async_request(request)
 
 
+def explorer_prefix() -> str:
+    """Basescan link prefix on Base Sepolia; a plain label on a local anvil chain (no public explorer)."""
+    rpc = get_settings().rpc_url_base_sepolia
+    return "local-chain tx " if ("127.0.0.1" in rpc or "localhost" in rpc) else BASESCAN_TX_URL
+
+
 def tx(label: str, tx_hash: str | None) -> None:
-    print(f"  {label:<34} {BASESCAN_TX_URL}{tx_hash}" if tx_hash else f"  {label:<34} (no tx)")
+    print(f"  {label:<34} {explorer_prefix()}{tx_hash}" if tx_hash else f"  {label:<34} (no tx)")
 
 
 async def call(api: httpx.AsyncClient, method: str, path: str, body: dict | None = None) -> dict:
