@@ -1,19 +1,22 @@
 /**
- * useDashboardData: every read the dashboard (`/`) needs, kept live by Server-Sent Events.
+ * useDashboardData: every read the F1 DESK dashboard (`/`) needs.
  *
- * Data flow: an initial `GET` per panel through TanStack Query (`lib/api.ts`), then the SSE
- * stream (`lib/sse.ts`) patches the same query cache:
- *   purchase / finding / alert → prepended to their list (deduplicated by id, capped)
- *   state / allocation / market / breaker → replace the cached value
- *   recharge / sweep → refetch state (balances changed)
- * A panel whose GET fails keeps rendering its own error line; the rest of the page still works.
+ * Data flow: an initial `GET` per panel through TanStack Query (`lib/api.ts`). Live updates come
+ * from the ONE app-wide SSE connection in `components/terminal/StreamProvider.tsx`, which patches
+ * the same query cache (keys shared via `components/terminal/queryKeys.ts`). This hook never opens
+ * an EventSource of its own. A panel whose GET fails shows its own error line; the rest still works.
+ *
+ * `QUERY_KEYS` is re-exported here because /fund, /agents and /sources import it from this file.
  */
 
 "use client";
 
-import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 
+import { LIST_LIMITS, QUERY_KEYS } from "@/components/terminal/queryKeys";
+import { useStreamStatus } from "@/components/terminal/StreamProvider";
 import {
+  demoStatus,
   getAlerts,
   getAllocations,
   getBreaker,
@@ -26,49 +29,16 @@ import {
   getState,
   listVouchers,
 } from "@/lib/api";
-import { useEventStream, type EventStreamState } from "@/lib/sse";
-import type { Alert, Finding, Purchase } from "@/lib/types";
 
-export const QUERY_KEYS = {
-  state: ["state"],
-  config: ["config"],
-  purchases: ["purchases"],
-  findings: ["findings"],
-  allocations: ["allocations"],
-  events: ["events-today"],
-  pmVsOptions: ["pm-vs-options"],
-  market: ["market"],
-  alerts: ["alerts"],
-  breaker: ["breaker"],
-  vouchers: ["vouchers"],
-} as const;
+export { QUERY_KEYS };
 
-const MAX_PURCHASES = 100;
-const MAX_FINDINGS = 50;
-const MAX_ALERTS = 50;
 const SLOW_REFRESH_MS = 60_000; // panels without an SSE event (events, pm-vs-options)
 
-interface WithId {
-  id: number | string;
-}
-
-/** Put `item` first, drop any older copy with the same id, keep at most `max` rows. */
-export function prependUnique<T extends WithId>(list: T[] | undefined, item: T, max: number): T[] {
-  const rest = (list ?? []).filter((existing) => existing.id !== item.id);
-  return [item, ...rest].slice(0, max);
-}
-
-function prependTo<T extends WithId>(client: QueryClient, key: readonly string[], item: T, max: number): void {
-  client.setQueryData<T[]>(key, (list) => prependUnique(list, item, max));
-}
-
 export function useDashboardData() {
-  const client = useQueryClient();
-
   const state = useQuery({ queryKey: QUERY_KEYS.state, queryFn: getState });
   const config = useQuery({ queryKey: QUERY_KEYS.config, queryFn: getConfig, staleTime: Infinity });
-  const purchases = useQuery({ queryKey: QUERY_KEYS.purchases, queryFn: () => getPurchases(MAX_PURCHASES) });
-  const findings = useQuery({ queryKey: QUERY_KEYS.findings, queryFn: () => getFindings(MAX_FINDINGS) });
+  const purchases = useQuery({ queryKey: QUERY_KEYS.purchases, queryFn: () => getPurchases(LIST_LIMITS.purchases) });
+  const findings = useQuery({ queryKey: QUERY_KEYS.findings, queryFn: () => getFindings(LIST_LIMITS.findings) });
   const allocations = useQuery({ queryKey: QUERY_KEYS.allocations, queryFn: getAllocations });
   const events = useQuery({ queryKey: QUERY_KEYS.events, queryFn: getEventsToday, refetchInterval: SLOW_REFRESH_MS });
   const pmVsOptions = useQuery({
@@ -77,33 +47,32 @@ export function useDashboardData() {
     refetchInterval: SLOW_REFRESH_MS,
   });
   const market = useQuery({ queryKey: QUERY_KEYS.market, queryFn: getMarket });
-  const alerts = useQuery({ queryKey: QUERY_KEYS.alerts, queryFn: () => getAlerts(MAX_ALERTS) });
+  const alerts = useQuery({ queryKey: QUERY_KEYS.alerts, queryFn: () => getAlerts(LIST_LIMITS.alerts) });
   const breaker = useQuery({ queryKey: QUERY_KEYS.breaker, queryFn: getBreaker });
+  const demo = useQuery({ queryKey: QUERY_KEYS.demoStatus, queryFn: demoStatus, retry: false, staleTime: 30_000 });
   const voucherMode = state.data?.mode === "voucher";
   const vouchers = useQuery({
     queryKey: QUERY_KEYS.vouchers,
     queryFn: () => listVouchers(state.data?.owner ?? undefined),
     enabled: voucherMode,
   });
+  const stream = useStreamStatus();
 
-  const stream: EventStreamState = useEventStream({
-    purchase: (row: Purchase) => prependTo(client, QUERY_KEYS.purchases, row, MAX_PURCHASES),
-    finding: (row: Finding) => prependTo(client, QUERY_KEYS.findings, row, MAX_FINDINGS),
-    alert: (row: Alert) => prependTo(client, QUERY_KEYS.alerts, row, MAX_ALERTS),
-    state: (snapshot) => {
-      client.setQueryData(QUERY_KEYS.state, snapshot);
-      if (snapshot.breaker) {
-        client.setQueryData(QUERY_KEYS.breaker, snapshot.breaker);
-      }
-    },
-    allocation: (payload) => client.setQueryData(QUERY_KEYS.allocations, payload),
-    market: (rows) => client.setQueryData(QUERY_KEYS.market, rows),
-    breaker: (status) => client.setQueryData(QUERY_KEYS.breaker, status),
-    recharge: () => void client.invalidateQueries({ queryKey: QUERY_KEYS.state }),
-    sweep: () => void client.invalidateQueries({ queryKey: QUERY_KEYS.state }),
-  });
-
-  return { state, config, purchases, findings, allocations, events, pmVsOptions, market, alerts, breaker, vouchers, stream };
+  return {
+    state,
+    config,
+    purchases,
+    findings,
+    allocations,
+    events,
+    pmVsOptions,
+    market,
+    alerts,
+    breaker,
+    vouchers,
+    demo,
+    stream,
+  };
 }
 
 export type DashboardData = ReturnType<typeof useDashboardData>;

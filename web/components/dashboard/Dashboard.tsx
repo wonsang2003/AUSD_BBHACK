@@ -1,110 +1,152 @@
 /**
- * Dashboard: the live trading-terminal view at `/`.
+ * Dashboard: F1 DESK, the live trading-terminal view at `/` (below the global TerminalChrome).
  *
- * Layout (laptop width and up; stacks on narrow screens):
- *   breaker banner (only when the token is paused)
- *   market strip
- *   budget header (allowance, caps, runway, exposure, mode, who pays gas, session buttons)
- *   left 2/3: allocation bars · agent cards · purchase feed · findings feed
- *   right 1/3: safety card · ask box · event radar · PM vs options · savings · alerts
+ * Layout: a 12-column grid from 1280 px up (stacks below), panels with amber title bars:
+ *   [breaker banner — only while the token is paused]
+ *   Row 1  BUDGET MONITOR (4) | SESSION (4) | SAFETY (4)
+ *   Row 2  AGENT BLOTTER (8) | ALLOCATION (4)
+ *   Row 3  PURCHASE BLOTTER (8) | FINDINGS WIRE (4)
+ *   Row 4  EVENT CALENDAR (3) | PRED MKT vs OPTIONS (3) | ALERTS + SAVINGS (3) | ASK THE DESK (3)
  *
- * Data: `useDashboardData()` — one GET per panel, kept live by the SSE stream. Each panel
- * handles its own loading / error / empty state, so a single failing endpoint never blanks the page.
+ * Data: `useDashboardData()` — one GET per panel; live updates come from the single app-wide SSE
+ * connection (`terminal/StreamProvider`). Each panel handles its own loading / error / empty
+ * state through `QueryView`, so one failing endpoint never blanks the page.
  */
 
 "use client";
 
-import { Card } from "@/components/ui/Card";
+import { Panel } from "@/components/terminal/Panel";
+import { Pill } from "@/components/terminal/Pill";
+import { QueryView } from "@/components/terminal/QueryView";
 
-import { AgentCards } from "./AgentCards";
-import { AlertsLog } from "./AlertsLog";
-import { AllocationBars } from "./AllocationBars";
+import { AgentBlotter } from "./AgentBlotter";
+import { AllocationPanel } from "./AllocationPanel";
 import { AskBox } from "./AskBox";
 import { BreakerBanner } from "./BreakerBanner";
-import { BudgetHeader } from "./BudgetHeader";
-import { EventRadar } from "./EventRadar";
-import { FindingsFeed } from "./FindingsFeed";
-import { MarketStrip } from "./MarketStrip";
-import { PmVsOptions } from "./PmVsOptions";
-import { PurchaseFeed } from "./PurchaseFeed";
-import { QueryState } from "./QueryState";
+import { BudgetMonitor, budgetMode } from "./BudgetMonitor";
+import { AlertsLog, EventCalendar, PmVsOptions, SavingsMeter } from "./DeskPanels";
+import { FindingsWire } from "./FindingsWire";
+import { PurchaseBlotter } from "./PurchaseBlotter";
 import { SafetyCard } from "./SafetyCard";
-import { SavingsMeter } from "./SavingsMeter";
+import { SessionPanel } from "./SessionPanel";
 import { useDashboardData } from "./useDashboardData";
+
+const ROW_1 = "col-span-12 xl:col-span-4";
+const WIDE = "col-span-12 xl:col-span-8";
+const NARROW = "col-span-12 xl:col-span-4";
+const QUARTER = "col-span-12 md:col-span-6 xl:col-span-3";
 
 export function Dashboard() {
   const data = useDashboardData();
-  const explorerTxUrl = data.config.data?.explorer_tx_url;
-  const breaker = data.breaker.data ?? data.state.data?.breaker;
-  const agents = data.state.data?.agents ?? [];
+  const state = data.state.data;
+  const breaker = data.breaker.data ?? state?.breaker;
+  const mode = state ? budgetMode(state) : null;
+  const purchaseCount = data.purchases.data?.length ?? 0;
+  const findingCount = data.findings.data?.length ?? 0;
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="grid grid-cols-12 gap-2">
       <BreakerBanner breaker={breaker} />
-      <MarketStrip query={data.market} />
-      <QueryState query={data.state}>
-        {(state) => <BudgetHeader state={state} streamStatus={data.stream.status} explorerTxUrl={explorerTxUrl} />}
-      </QueryState>
 
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-12">
-        <div className="flex min-w-0 flex-col gap-3 lg:col-span-8">
-          <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-            <Card title="Today's allocation" subtitle="keeper split · reasons · realized value per $">
-              <QueryState
-                query={data.allocations}
-                isEmpty={(payload) => payload.allocations.length === 0}
-                emptyText="No allocation yet — start a session."
-              >
-                {(payload) => <AllocationBars allocations={payload} agents={agents} />}
-              </QueryState>
-            </Card>
-            <Card title="Agents" subtitle="AUSD wallets · 0 ETH (relayer pays gas)">
-              <QueryState query={data.state} isEmpty={(state) => state.agents.length === 0} emptyText="No agents configured.">
-                {(state) => <AgentCards agents={state.agents} breaker={breaker} />}
-              </QueryState>
-            </Card>
-          </div>
-          <Card title="Purchase feed" subtitle="bought · skipped by the VOI gate · failed" flush>
-            <QueryState query={data.purchases}>
-              {(rows) => <PurchaseFeed purchases={rows} explorerTxUrl={explorerTxUrl} />}
-            </QueryState>
-          </Card>
-          <Card title="Findings" subtitle="click a row for the summary and paid receipts" flush>
-            <QueryState query={data.findings}>
-              {(rows) => <FindingsFeed findings={rows} explorerTxUrl={explorerTxUrl} />}
-            </QueryState>
-          </Card>
-        </div>
+      {/* Row 1 */}
+      <Panel
+        code="BMON"
+        title="Budget monitor"
+        className={ROW_1}
+        actions={
+          state ? (
+            <>
+              {mode ? <Pill tone="white">{mode === "voucher" ? "VOUCHER MODE" : "PERMIT MODE"}</Pill> : <Pill>NO BUDGET</Pill>}
+              {state.budget.paused ? <Pill tone="red">PAUSED</Pill> : null}
+              {state.budget.revoked ? <Pill tone="red">REVOKED</Pill> : null}
+            </>
+          ) : null
+        }
+      >
+        <QueryView query={data.state} label="STATE">
+          {(snapshot) => <BudgetMonitor state={snapshot} />}
+        </QueryView>
+      </Panel>
 
-        <div className="flex min-w-0 flex-col gap-3 lg:col-span-4">
-          <Card title="Safety">
-            <QueryState query={data.state}>{(state) => <SafetyCard state={state} vouchers={data.vouchers.data} />}</QueryState>
-          </Card>
-          <Card title="Ask the desk">
-            <AskBox explorerTxUrl={explorerTxUrl} />
-          </Card>
-          <Card title="Event radar" subtitle="today" flush>
-            <div className="p-3">
-              <QueryState query={data.events} isEmpty={(rows) => rows.length === 0} emptyText="No scheduled events today.">
-                {(rows) => <EventRadar events={rows} />}
-              </QueryState>
-            </div>
-          </Card>
-          <Card title="Prediction market vs options" subtitle="latest pm_edge purchase" flush>
-            <QueryState query={data.pmVsOptions} isEmpty={(rows) => rows.length === 0} emptyText="No pm_edge purchase yet.">
-              {(rows) => <PmVsOptions rows={rows} explorerTxUrl={explorerTxUrl} />}
-            </QueryState>
-          </Card>
-          <Card title="Savings meter" subtitle="vs subscriptions">
-            <QueryState query={data.state}>{(state) => <SavingsMeter savings={state.savings} />}</QueryState>
-          </Card>
-          <Card title="Alerts" subtitle="also sent to Telegram">
-            <QueryState query={data.alerts} isEmpty={(rows) => rows.length === 0} emptyText="No alerts.">
-              {(rows) => <AlertsLog alerts={rows} />}
-            </QueryState>
-          </Card>
-        </div>
+      <Panel code="SESS" title="Session" className={ROW_1}>
+        <QueryView query={data.state} label="STATE">
+          {(snapshot) => <SessionPanel state={snapshot} demo={data.demo} />}
+        </QueryView>
+      </Panel>
+
+      <Panel code="SAFE" title="Safety" className={ROW_1}>
+        <QueryView query={data.state} label="STATE">
+          {(snapshot) => <SafetyCard state={snapshot} vouchers={data.vouchers.data} breaker={breaker} />}
+        </QueryView>
+      </Panel>
+
+      {/* Row 2 */}
+      <Panel code="AGNT" title="Agent blotter" className={WIDE} flush>
+        <QueryView query={data.state} label="AGENTS">
+          {(snapshot) => <AgentBlotter agents={snapshot.agents ?? []} breaker={breaker} live={snapshot.session.live} />}
+        </QueryView>
+      </Panel>
+
+      <Panel code="ALOC" title="Allocation" className={NARROW}>
+        <QueryView query={data.allocations} label="ALLOCATION">
+          {(payload) => <AllocationPanel allocations={payload} />}
+        </QueryView>
+      </Panel>
+
+      {/* Row 3 */}
+      <Panel
+        code="BLTR"
+        title="Purchase blotter"
+        className={WIDE}
+        flush
+        actions={<span className="num text-[11px] font-bold">{purchaseCount} ROWS</span>}
+      >
+        <QueryView query={data.purchases} label="PURCHASES">
+          {(rows) => <PurchaseBlotter purchases={rows} />}
+        </QueryView>
+      </Panel>
+
+      <Panel
+        code="WIRE"
+        title="Findings wire"
+        className={NARROW}
+        flush
+        actions={<span className="num text-[11px] font-bold">{findingCount}</span>}
+      >
+        <QueryView query={data.findings} label="FINDINGS">
+          {(rows) => <FindingsWire findings={rows} />}
+        </QueryView>
+      </Panel>
+
+      {/* Row 4 */}
+      <Panel code="EVTS" title="Event calendar" className={QUARTER} flush>
+        <QueryView query={data.events} label="EVENTS">
+          {(rows) => <EventCalendar events={rows} />}
+        </QueryView>
+      </Panel>
+
+      <Panel code="PMVO" title="Pred mkt vs options" className={QUARTER} flush>
+        <QueryView query={data.pmVsOptions} label="PM VS OPTIONS">
+          {(rows) => <PmVsOptions rows={rows} />}
+        </QueryView>
+      </Panel>
+
+      <div className={`${QUARTER} flex min-w-0 flex-col gap-2`}>
+        <Panel code="ALRT" title="Alerts" flush actions={<span className="text-[11px] font-bold">→ TELEGRAM</span>}>
+          <QueryView query={data.alerts} label="ALERTS">
+            {(rows) => <AlertsLog alerts={rows} />}
+          </QueryView>
+        </Panel>
+        <Panel code="SAVE" title="Savings">
+          <QueryView query={data.state} label="STATE">
+            {(snapshot) => <SavingsMeter savings={snapshot.savings} />}
+          </QueryView>
+        </Panel>
       </div>
+
+      <Panel code="ASK" title="Ask the desk" className={QUARTER}>
+        <AskBox />
+      </Panel>
     </div>
   );
 }

@@ -1,26 +1,35 @@
 /**
- * SafetyCard: the "what can go wrong" numbers, in plain words.
+ * SafetyCard (SAFE): the "what can go wrong" numbers, as key/value rows.
  *
- * Data: `State` (+ today's voucher from `GET /api/vouchers` in voucher mode).
- *   * Max loss if an agent is compromised today = the largest agent wallet balance (an agent key
- *     can only ever spend what is in its own wallet; the contract caps recharges).
- *   * Custody: permit mode → funds stay in your wallet behind a revocable allowance.
- *   * Voucher mode → today's spend is bounded by today's voucher, which you signed; vouchers pay
- *     only your own registered agents, through our contract, on their own UTC day.
+ * Data: `State` (+ today's voucher from `GET /api/vouchers` in voucher mode, + breaker status).
+ *   * Max loss if an agent is compromised = the largest agent AUSD balance (an agent key can only
+ *     spend its own wallet; agents hold no ETH and no allowance; the contract caps recharges).
+ *   * Custody: permit mode → funds stay in your wallet behind a revocable allowance;
+ *     voucher mode → today's spend is bounded by today's signed voucher.
+ *   * Compliance switches (freeze check before paying, pre-flight simulation, zero-ETH agents).
+ *   * Circuit breaker: global_open = token paused → all agents halted.
+ *
+ * `voucherValue` is also used by /fund (VoucherCalendar).
  */
 
-import { formatAusd } from "@/lib/format";
+import { Pill } from "@/components/terminal/Pill";
+import { KeyValue } from "@/components/terminal/Stat";
+import { fmtAusd } from "@/components/terminal/format";
 import { utcDayIndex } from "@/lib/eip712";
-import type { State, Voucher } from "@/lib/types";
+import type { BreakerStatus, State, Voucher } from "@/lib/types";
+
+import { budgetMode } from "./BudgetMonitor";
 
 interface SafetyCardProps {
   state: State;
   vouchers: Voucher[] | undefined;
+  breaker: BreakerStatus | undefined;
 }
 
 /** Atomic value of a voucher row (`value` or `value_atomic`, whichever the backend sent). */
 export function voucherValue(voucher: Voucher): number {
-  return Number(voucher.value ?? voucher.value_atomic ?? 0);
+  const value = Number(voucher.value ?? voucher.value_atomic ?? 0);
+  return Number.isFinite(value) ? value : 0;
 }
 
 function todaysVoucher(vouchers: Voucher[] | undefined): Voucher | undefined {
@@ -28,34 +37,75 @@ function todaysVoucher(vouchers: Voucher[] | undefined): Voucher | undefined {
   return vouchers?.find((voucher) => voucher.day_index === today);
 }
 
-export function SafetyCard({ state, vouchers }: SafetyCardProps) {
-  const maxAgentBalance = Math.max(0, ...state.agents.map((agent) => agent.balance));
-  const voucherMode = state.mode === "voucher";
-  const today = todaysVoucher(vouchers);
-  const todayLimit = today ? voucherValue(today) : state.budget.daily_cap;
+function SwitchPill({ on, label, hint }: { on: boolean | undefined; label: string; hint: string }) {
+  if (on === undefined) {
+    return (
+      <Pill tone="grey" outline title={`${hint} (not reported)`}>
+        {label} ?
+      </Pill>
+    );
+  }
   return (
-    <ul className="flex flex-col gap-2 text-xs">
-      <li>
-        Max loss if an agent is compromised today:{" "}
-        <span className="num font-semibold text-warn">{formatAusd(maxAgentBalance, true)}</span>
-        <div className="text-[11px] text-fg-dim">= the largest agent wallet balance; agents hold no ETH and no allowance.</div>
-      </li>
-      {voucherMode ? (
+    <Pill tone={on ? "green" : "red"} outline title={hint}>
+      {on ? "✓" : "✗"} {label}
+    </Pill>
+  );
+}
+
+export function SafetyCard({ state, vouchers, breaker }: SafetyCardProps) {
+  const maxAgentBalance = Math.max(0, ...state.agents.map((agent) => Number(agent.balance) || 0));
+  const mode = budgetMode(state);
+  const today = todaysVoucher(vouchers);
+  const compliance = state.compliance ?? {};
+  const backingOff = breaker ? Object.values(breaker.agents ?? {}).filter((agent) => agent.backoff_seconds > 0).length : 0;
+
+  return (
+    <div className="flex flex-col">
+      <KeyValue
+        label="Max loss if an agent is compromised"
+        value={`${fmtAusd(maxAgentBalance)} AUSD`}
+        tone="warn"
+        hint="= the largest agent AUSD balance; agents hold no ETH and no allowance"
+      />
+      {mode === "voucher" ? (
         <>
-          <li>
-            Today&apos;s spend can never exceed <span className="num font-semibold text-up">{formatAusd(todayLimit, true)}</span>,
-            enforced by your signature.
-          </li>
-          <li className="text-fg-muted">Vouchers can only pay your own registered agents, through our contract, on their own day.</li>
+          <KeyValue label="Custody" value="SIGNED DAILY VOUCHERS" tone="up" hint="Vouchers pay only your own agents, on their own UTC day" />
+          <KeyValue
+            label="Today's voucher limit"
+            value={`${fmtAusd(today ? voucherValue(today) : state.budget.daily_cap)} AUSD`}
+            hint="Today's spend can never exceed this, enforced by your signature"
+          />
+        </>
+      ) : mode === "permit" ? (
+        <>
+          <KeyValue label="Custody" value="YOUR WALLET · REVOCABLE" tone="up" hint="Permit allowance; revoke anytime on F2 FUND" />
+          <KeyValue label="Daily cap (on-chain)" value={`${fmtAusd(state.budget.daily_cap)} AUSD`} hint="Enforced by the BudgetController" />
         </>
       ) : (
-        <li>
-          Custody: <span className="font-semibold text-up">your wallet (permit), revocable</span>
-          <div className="text-[11px] text-fg-dim">
-            Daily cap {formatAusd(state.budget.daily_cap, true)} enforced by the BudgetController. Revoke anytime on /fund.
-          </div>
-        </li>
+        <KeyValue label="Custody" value="NO BUDGET OPEN" tone="muted" />
       )}
-    </ul>
+      <KeyValue
+        label="Circuit breaker"
+        value={
+          breaker?.global_open ? (
+            <Pill tone="red" title={breaker.global_reason}>
+              OPEN · HALTED
+            </Pill>
+          ) : breaker ? (
+            <Pill tone="green">CLOSED · OK</Pill>
+          ) : (
+            <Pill tone="grey">UNKNOWN</Pill>
+          )
+        }
+        hint={breaker?.global_reason || "Trips when the AUSD token is paused; all agents halt"}
+      />
+      {backingOff > 0 ? <KeyValue label="Agents backing off" value={String(backingOff)} tone="warn" /> : null}
+      <div className="flex flex-wrap items-center gap-1 pt-1.5">
+        <span className="t-label mr-1">Compliance</span>
+        <SwitchPill on={compliance.freeze_check_before_payment} label="FREEZE CHECK" hint="payTo and payer checked with isAccountFrozen before paying" />
+        <SwitchPill on={compliance.preflight_simulation} label="PRE-FLIGHT" hint="Every payment is simulated before it is sent" />
+        <SwitchPill on={compliance.agents_zero_eth} label="0-ETH AGENTS" hint="Agents hold no ETH; the relayer pays all gas" />
+      </div>
+    </div>
   );
 }
