@@ -1,65 +1,84 @@
 /*
- * PocketDesk global styles: a dark, dense trading-terminal look (Tailwind CSS v4).
+ * PocketDesk global styles: a Bloomberg / FactSet-style trading terminal (Tailwind CSS v4).
  *
- * Design tokens live in `@theme` below; Tailwind turns each `--color-*` into utilities
- * (`bg-surface`, `border-line`, `text-fg-muted`, `text-up`, `bg-down/10`, …). Semantic colors:
- *   up (green)   = good / bought / live         down (red) = bad / failed / paused token
- *   warn (amber) = attention / testnet          info (blue) = neutral highlight
- * Numbers use the `num` utility: monospace with tabular figures so columns line up.
+ * Look: pure black background, square #0b0b0b panels with 1px #2a2a2a borders, solid amber title
+ * bars with black uppercase text, monospace everywhere with tabular figures, dense but readable
+ * (13px base, muted text never darker than #9a9a9a).
  *
- * No web fonts are downloaded (system stacks only), so `next build` works offline.
+ * Color tokens live in `@theme`; Tailwind turns each `--color-*` into utilities (`bg-surface`,
+ * `border-line`, `text-fg-muted`, `text-up`, `text-amber`, …). Semantic colors:
+ *   up    #3ddc84  positive / bought / live         down  #ff4d4d  negative / failed / paused token
+ *   warn  #ffcc00  warning                          info  #4fc3f7  links, tx hashes
+ *   amber #ffa028  terminal accent: title bars, labels, function keys
+ *
+ * The `t-*` classes below are the terminal building blocks used by `components/terminal/*`
+ * (Panel, DataTable, Pill, TermButton, …); pages should use those components, not the classes.
+ *
+ * No web fonts are downloaded (system monospace stacks only), so `next build` works offline.
  */
 
 @import "tailwindcss";
 
 @theme {
   /* surfaces, darkest first */
-  --color-bg: #07090c;
-  --color-surface: #0c1015;
-  --color-surface-2: #121820;
-  --color-line: #1d2630;
+  --color-bg: #000000;
+  --color-surface: #0b0b0b;
+  --color-surface-2: #111111;
+  --color-surface-3: #1a1a1a;
+  --color-line: #2a2a2a;
 
-  /* text */
-  --color-fg: #d6dde5;
-  --color-fg-muted: #8a95a3;
-  --color-fg-dim: #535e6b;
+  /* text (muted never darker than #9a9a9a, for readability) */
+  --color-fg: #e6e6e6;
+  --color-fg-muted: #9a9a9a;
+  --color-fg-dim: #9a9a9a;
 
   /* semantic accents */
-  --color-up: #22c55e;
-  --color-down: #ef4444;
-  --color-warn: #f59e0b;
-  --color-info: #38bdf8;
+  --color-up: #3ddc84;
+  --color-down: #ff4d4d;
+  --color-warn: #ffcc00;
+  --color-info: #4fc3f7;
+  --color-amber: #ffa028;
 
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --font-sans: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
 @layer base {
   html {
     color-scheme: dark;
+    background: #000000;
   }
 
   body {
     background: var(--color-bg);
     color: var(--color-fg);
-    font-family: var(--font-sans);
+    font-family: var(--font-mono);
     font-size: 13px;
-    line-height: 1.45;
+    line-height: 1.35;
+    font-variant-numeric: tabular-nums;
     -webkit-font-smoothing: antialiased;
   }
 
   * {
-    scrollbar-color: var(--color-line) transparent;
+    scrollbar-color: #3a3a3a #0b0b0b;
     scrollbar-width: thin;
   }
 
   ::selection {
-    background: color-mix(in srgb, var(--color-info) 30%, transparent);
+    background: rgba(255, 160, 40, 0.35);
   }
 
   a {
     color: inherit;
     text-decoration: none;
+  }
+
+  input,
+  button,
+  select,
+  textarea {
+    font-family: inherit;
+    font-size: inherit;
   }
 }
 
@@ -67,5 +86,243 @@
 @utility num {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
 }
+
+@layer components {
+  /* ── Panel ─────────────────────────────────────────────────────────────── */
+  .t-panel {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+  }
+
+  .t-panel__bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 22px;
+    padding: 2px 6px;
+    background: var(--color-amber);
+    color: #000000;
+  }
+
+  .t-panel__title {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .t-panel__actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .t-panel__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 6px 8px;
+  }
+
+  .t-panel__body--flush {
+    padding: 0;
+  }
+
+  /* ── DataTable ─────────────────────────────────────────────────────────── */
+  .t-table-wrap {
+    overflow: auto;
+  }
+
+  .t-table {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  .t-table th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--color-surface-3);
+    color: var(--color-amber);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    text-align: left;
+    padding: 4px 6px;
+    border-bottom: 1px solid var(--color-line);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .t-table td {
+    padding: 3px 6px;
+    border-bottom: 1px solid #1c1c1c;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: middle;
+  }
+
+  .t-table tbody tr:nth-child(odd) td {
+    background: var(--color-surface);
+  }
+
+  .t-table tbody tr:nth-child(even) td {
+    background: var(--color-surface-2);
+  }
+
+  .t-table tbody tr:hover td {
+    background: #1d1d1d;
+  }
+
+  .t-table tbody tr.t-row--click {
+    cursor: pointer;
+  }
+
+  .t-table .t-right {
+    text-align: right;
+  }
+
+  .t-table .t-center {
+    text-align: center;
+  }
+
+  /* ── Pill ──────────────────────────────────────────────────────────────── */
+  .t-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 0 4px;
+    height: 16px;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    border: 1px solid transparent;
+    line-height: 1;
+  }
+
+  /* ── Buttons ───────────────────────────────────────────────────────────── */
+  .t-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 26px;
+    padding: 0 10px;
+    border: 1px solid var(--color-amber);
+    background: #000000;
+    color: var(--color-amber);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .t-btn:hover:not(:disabled) {
+    background: rgba(255, 160, 40, 0.15);
+  }
+
+  .t-btn:focus-visible {
+    outline: 1px solid var(--color-fg);
+    outline-offset: 1px;
+  }
+
+  .t-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
+
+  .t-btn--primary {
+    background: var(--color-amber);
+    color: #000000;
+  }
+
+  .t-btn--primary:hover:not(:disabled) {
+    background: #ffb550;
+  }
+
+  .t-btn--danger {
+    border-color: var(--color-down);
+    color: var(--color-down);
+  }
+
+  .t-btn--danger:hover:not(:disabled) {
+    background: rgba(255, 77, 77, 0.15);
+  }
+
+  .t-btn--go {
+    background: var(--color-up);
+    border-color: var(--color-up);
+    color: #000000;
+  }
+
+  .t-btn--go:hover:not(:disabled) {
+    background: #66e6a0;
+  }
+
+  .t-btn--sm {
+    height: 20px;
+    padding: 0 6px;
+    font-size: 11px;
+  }
+
+  .t-btn--lg {
+    height: 32px;
+    padding: 0 14px;
+    font-size: 13px;
+  }
+
+  /* ── Command-line input ────────────────────────────────────────────────── */
+  .t-input {
+    height: 26px;
+    min-width: 0;
+    padding: 0 8px;
+    background: #000000;
+    border: 1px solid var(--color-line);
+    color: var(--color-fg);
+    outline: none;
+    text-transform: none;
+  }
+
+  .t-input::placeholder {
+    color: #8a8a8a;
+  }
+
+  .t-input:focus {
+    border-color: var(--color-amber);
+  }
+
+  /* ── Labels ────────────────────────────────────────────────────────────── */
+  .t-label {
+    color: var(--color-amber);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+}
+
+@keyframes t-blink {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.t-blink {
+  animation: t-blink 1.2s steps(2, start) infinite;
+}
+

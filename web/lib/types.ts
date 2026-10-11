@@ -37,6 +37,11 @@ export interface Health {
   ausd_address: AddressString;
   controller_address: AddressString;
   live_vendor_mode: boolean;
+  startup_error?: string | null;
+  /** (proposed) The backend's RPC URL; a localhost URL means the local anvil demo chain. */
+  rpc_url?: string | null;
+  /** (proposed) True when the backend runs against a local chain (anvil), not Base Sepolia. */
+  local_chain?: boolean;
 }
 
 export interface AgentConfig {
@@ -77,6 +82,8 @@ export interface BudgetState {
   revoked: boolean;
   allowance_remaining: Atomic;
   wallet_balance: Atomic;
+  /** Funding mode of the open budget (the backend also sends it here); null when no budget. */
+  mode?: BudgetMode | null;
 }
 
 export interface AgentState {
@@ -92,15 +99,26 @@ export interface AgentState {
   paused: boolean;
   reasons: string[];
   /** Update #1: agents hold zero ETH (the relayer pays gas); the dashboard shows this is 0. */
-  eth_balance_wei?: WeiString;
+  eth_balance_wei?: WeiString | number;
+  /** Demo vendors this agent buys from. */
+  sellers?: string[];
+  /** Per-agent breaker backoff, when the agent is backing off after a failed pre-flight. */
+  backoff?: AgentBackoffStatus | null;
 }
 
 /** Update #1: the gas-paying relayer. (proposed location inside State) */
 export interface RelayerState {
   address: AddressString;
-  eth_balance_wei: WeiString;
-  eth_spent_today_wei: WeiString;
+  eth_balance_wei: WeiString | number;
+  eth_spent_today_wei: WeiString | number;
   tx_count_today: number;
+}
+
+/** Update #1 compliance switches reported by the backend (all true in a correct build). */
+export interface ComplianceState {
+  freeze_check_before_payment?: boolean;
+  preflight_simulation?: boolean;
+  agents_zero_eth?: boolean;
 }
 
 export interface SessionState {
@@ -118,6 +136,7 @@ export interface SavingsState {
   mtd_spend_atomic: Atomic;
   prorated_subscriptions_usd: number;
   subscriptions: Subscription[];
+  savings_usd?: number;
 }
 
 /** How the budget is funded: one revocable permit ("Flexible") or 7 signed daily vouchers ("Maximum safety"). */
@@ -137,6 +156,7 @@ export interface State {
   savings: SavingsState;
   relayer?: RelayerState;
   breaker?: BreakerStatus;
+  compliance?: ComplianceState;
 }
 
 export type PurchaseStatus = "bought" | "skipped" | "failed";
@@ -406,6 +426,49 @@ export interface SessionStartResponse {
 
 export interface SessionStopResponse {
   sweep_txs: AgentTx[];
+}
+
+/** POST /api/session/tick response. Every field optional: the dashboard summarizes what is there. */
+export interface SessionTickResponse {
+  purchases?: Purchase[];
+  findings?: Finding[];
+  results?: Array<Record<string, unknown>>;
+  agents?: string[];
+  message?: string;
+}
+
+/** GET /api/demo/status: can the backend open a budget from its server-side demo wallet? */
+export interface DemoStatus {
+  available: boolean;
+  reason?: string | null;
+  user_address?: AddressString | null;
+  ausd_balance_atomic?: Atomic | null;
+  budget_exists?: boolean;
+}
+
+/** POST /api/demo/fund body; `{}` uses the backend's default budget. */
+export interface DemoFundRequest {
+  total_budget_atomic?: Atomic;
+  daily_cap_atomic?: Atomic;
+  plan_days?: number;
+  agent_caps_atomic?: Record<string, Atomic>;
+}
+
+/** One step of the demo funding flow (faucet, permit, open budget, …) and its relayer tx. */
+export interface DemoFundStep {
+  step?: string;
+  name?: string;
+  label?: string;
+  status?: string;
+  detail?: string | null;
+  tx_hash?: TxHash | null;
+}
+
+/** POST /api/demo/fund response. */
+export interface DemoFundResponse {
+  owner?: AddressString;
+  steps?: DemoFundStep[];
+  tx_hash?: TxHash | null;
 }
 
 export interface AskResponse {
