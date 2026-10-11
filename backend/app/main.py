@@ -37,6 +37,7 @@ from app.api import (
     breaker,
     budget,
     catalog,
+    demo,
     faucet,
     feeds,
     health,
@@ -81,6 +82,7 @@ API_ROUTERS = (
     stream.router,
     faucet.router,
     breaker.router,
+    demo.router,
 )
 X402_HEADERS = [HEADER_PAYMENT_REQUIRED, HEADER_PAYMENT_RESPONSE, HEADER_PAYMENT_SIGNATURE]
 

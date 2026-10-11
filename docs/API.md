@@ -81,3 +81,19 @@ Errors: HTTP 4xx/5xx with `{detail: "human readable reason"}`.
 `purchase` (Purchase, includes skipped), `finding` (Finding), `allocation` (allocations payload), `recharge`
 (`{agent, amount_atomic, tx_hash, reason}`), `sweep` (`{agent, amount_atomic, tx_hash}`), `alert` (Alert), `state`
 (State snapshot, at most every 5 s), `market` (market rows), `ask` (`{question, answer, receipts}`), `ping` every 15 s.
+
+## Demo wallet + manual tick (no browser wallet; testnet / local anvil only)
+
+The server can play the user with `DEMO_USER_PRIVATE_KEY` (backend `.env`, a testnet/anvil-only key). It runs the same
+prepare → sign → open code as the wallet flow; only the signatures come from the server. The key is never returned.
+
+| Method/path | Body → Returns |
+|---|---|
+| `GET /api/demo/status` | → `{available: bool, reason, owner: address\|null, chain_id, local_chain: bool}` — `available` only when `DEMO_USER_PRIVATE_KEY` is a valid key AND `chain_id` is 84532 or 31337; `local_chain` = the RPC host is `127.0.0.1`/`localhost` |
+| `POST /api/demo/fund` | `{mode: "permit"\|"voucher" = "permit", total_budget_atomic = 20 AUSD, daily_cap_atomic = 5 AUSD, plan_days = 7, agent_caps_atomic?: {agent: int}}` (all optional, `{}` works) → `{owner, mode, steps: [{label, tx_hash}]}`. Steps: the relayer faucets the demo user when its AUSD balance is below what the budget needs (total for permit, 7 × daily cap for vouchers), the demo user becomes the stored owner, then **permit**: permit + BudgetConfig signed with fresh nonces → `openBudget`; **voucher**: 7 daily vouchers (each = `daily_cap_atomic`) + BudgetConfig → `openVoucherBudget`, vouchers stored. 400 `{detail: "demo wallet unavailable: …"}` when not available |
+| `POST /api/session/tick` | `{agent?: str}` (or no body) → `{decisions: [Purchase]}` — one buying round now for that agent (all agents when omitted), instead of waiting for the scheduler. Unknown agent → 400 |
+
+Session preconditions (`POST /api/session/start`): 409 with a sentence the dashboard can show as-is —
+`"No budget yet — fund one on F2 FUND (or click DEMO FUND)"`, `"Budget is paused — …"`, `"Budget has expired — …"`.
+`POST /api/session/stop` without an owner answers the same "No budget yet" 409.
+Any unexpected error inside an API handler answers 500 `{detail: "<ErrorType>: <message>"}` (still with CORS headers).

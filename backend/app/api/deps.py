@@ -19,6 +19,11 @@ Error rule (docs/API.md "Errors"): every failure leaves as HTTP 4xx/5xx with `{d
     other RuntimeError                 409  the action conflicts with the current state
     ConnectionError / TimeoutError     502  an upstream (RPC, data source) failed
     TxPendingError                     504  broadcast but no receipt yet (tx hash in detail)
+    any other Exception                500  "<ErrorType>: <message>" (logged with its traceback)
+
+The last row matters for the dashboard: an HTTPException is answered INSIDE the CORS middleware,
+so the browser can read the `{detail}`; an exception that escapes to the app-wide handler is
+answered outside it, without CORS headers, and the browser only sees "Failed to fetch".
 
 RPC URLs are redacted from every message (they may embed API keys); private keys never
 appear in any message.
@@ -54,6 +59,7 @@ HTTP_BAD_REQUEST = 400
 HTTP_FORBIDDEN = 403
 HTTP_NOT_FOUND = 404
 HTTP_CONFLICT = 409
+HTTP_INTERNAL_ERROR = 500
 HTTP_BAD_GATEWAY = 502
 HTTP_UNAVAILABLE = 503
 HTTP_GATEWAY_TIMEOUT = 504
@@ -173,7 +179,8 @@ def resolve_owner(runtime: Any, owner: str | None) -> str:
     """
     candidate = owner or getattr(runtime, "owner", None) or stored_owner(runtime)
     if not candidate:
-        raise HTTPException(HTTP_BAD_REQUEST, "no owner: open a budget first or pass `owner`")
+        raise HTTPException(HTTP_BAD_REQUEST, "No budget owner yet — fund a budget on F2 FUND "
+                                            "(or click DEMO FUND), or pass `owner`")
     return checksum(candidate, "owner")
 
 
@@ -224,6 +231,15 @@ def api_errors() -> Iterator[None]:
         raise HTTPException(HTTP_BAD_GATEWAY, f"upstream failed: {redact_urls(str(exc))}") from exc
     except RuntimeError as exc:
         raise HTTPException(HTTP_CONFLICT, redact_urls(str(exc))) from exc
+    except Exception as exc:  # noqa: BLE001 — anything else still answers a readable {detail}
+        log.exception("unexpected error in an API handler")
+        raise HTTPException(HTTP_INTERNAL_ERROR, readable_error(exc)) from exc
+
+
+def readable_error(exc: BaseException) -> str:
+    """'<ErrorType>: <message>' with RPC URLs redacted (just the type when the message is empty)."""
+    message = redact_urls(str(exc)).strip()
+    return f"{type(exc).__name__}: {message}" if message else type(exc).__name__
 
 
 async def call_blocking(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
