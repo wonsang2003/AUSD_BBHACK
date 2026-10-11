@@ -1,3 +1,8 @@
+# Foundry config for PocketDesk's contracts (BudgetController + the local-test MockAUSD).
+# Build/test:  forge build && forge test -vv
+# If forge cannot download solc 0.8.24 (offline), point it at a local binary:
+#   FOUNDRY_SOLC=/path/to/solc-0.8.24 forge build
+
 [profile.default]
 src = "src"
 out = "out"
@@ -10,6 +15,14 @@ remappings = [
   "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
   "forge-std/=lib/forge-std/src/",
 ]
+
+[fuzz]
+runs = 256
+
+[lint]
+# Readability is this project's top code-quality goal, so gas-only style suggestions
+# (inline-assembly keccak256, wrapping modifier bodies in internal functions) are switched off.
+exclude_lints = ["asm-keccak256", "unwrapped-modifier-logic"]
 
 [rpc_endpoints]
 base_sepolia = "${RPC_URL_BASE_SEPOLIA}"
