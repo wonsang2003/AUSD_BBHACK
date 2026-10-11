@@ -23,7 +23,7 @@ const ETH_DECIMALS = 18;
 const GAS_TOOLTIP = "Gas paid by relayer; agents pay with ERC-3009 signatures only";
 
 /** Wei → "0.0000" (always four decimals so a zero balance reads as a deliberate zero). */
-export function formatEth4(wei: string | undefined): string {
+export function formatEth4(wei: string | number | undefined): string {
   return formatFixedPoint(wei ?? "0", { decimals: ETH_DECIMALS, minDecimals: 4, maxDecimals: 4 });
 }
 

@@ -26,6 +26,7 @@ import { AUSD_ADDRESS } from "@/lib/env";
 
 import { BudgetControls } from "./BudgetControls";
 import { BudgetForm } from "./BudgetForm";
+import { DemoWalletPanel } from "./DemoWalletPanel";
 import {
   defaultFormValues,
   formValuesFromSettings,
@@ -113,6 +114,9 @@ export function FundPage() {
   return (
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-12">
       <div className="flex min-w-0 flex-col gap-3 lg:col-span-7">
+        <Card title="Funding source · demo wallet" subtitle="no browser wallet needed · server-side testnet key">
+          <DemoWalletPanel values={values} onTx={addTx} />
+        </Card>
         <Card title="1 · Wallet" subtitle="Base Sepolia · you sign, the relayer pays gas">
           <WalletPanel ausdAddress={ausdAddress} explorerTxUrl={explorerTxUrl} onTx={addTx} />
         </Card>
