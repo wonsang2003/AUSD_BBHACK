@@ -54,8 +54,11 @@ def probe_payload(vendors: Any, refreshed: bool) -> dict[str, Any]:
     rows = list(vendors)
     times = [row["probed_at"] for row in rows if isinstance(row, dict) and row.get("probed_at")]
     flags = [bool(row["cached"]) for row in rows if isinstance(row, dict) and "cached" in row]
+    newest = max(times) if times else datetime.now(UTC).isoformat()
+    if isinstance(newest, int | float):            # unix seconds → ISO-8601 (web `IsoTime`)
+        newest = datetime.fromtimestamp(newest, UTC).isoformat()
     return {
-        "probed_at": max(times) if times else datetime.now(UTC).isoformat(),
+        "probed_at": newest,
         "cached": all(flags) if flags else not refreshed,
         "vendors": rows,
     }
