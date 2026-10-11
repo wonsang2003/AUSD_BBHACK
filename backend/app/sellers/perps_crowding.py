@@ -23,6 +23,13 @@ Two ways to get the z-scores:
     Hyperliquid perps right now, using a robust z (median and MAD, because funding
     across small coins is heavy-tailed). OI change is not observable from a single
     snapshot, so on a cold start crowding_z = funding_z and confidence is lower.
+    Hyperliquid funding often sits exactly at its 0.00125 %/h baseline for most coins,
+    which makes MAD = 0; the robust z then falls back to the mean absolute deviation
+    (σ ≈ 1.2533 · MeanAD), so a stretched BTC funding rate is still visible.
+
+The rolling window fills from paid calls (`compute`) and, if the app schedules it,
+from `sample_now()` — a free background snapshot so the time-series method is ready
+sooner. History lives in process memory and is lost on restart.
 
 Agents read `assets[i].crowding_z` (positive = crowded long) — see
 `app/agents/beliefs.update_from_perps_crowding`.
@@ -40,6 +47,7 @@ from datetime import datetime, timezone
 
 from app.config import get_settings
 from app.data.hyperliquid import PerpContext, fetch_perp_contexts, index_by_symbol
+from app.sellers.expected_move import require_payout_address
 from app.x402.offer import SellerOffer
 
 # ─── offer ───────────────────────────────────────────────────────────────────
@@ -47,6 +55,7 @@ from app.x402.offer import SellerOffer
 SELLER_ID = "perps_crowding"
 SELLER_PATH = "/sell/perps-crowding"
 PRICE_ATOMIC = 20_000  # 0.02 AUSD (6 decimals)
+PAYOUT_SETTING_NAME = "SELLER_PAYTO_PERPS"   # .env variable holding this seller's payout address
 DESCRIPTION = "Perps crowding (demo vendor): Hyperliquid funding + open-interest z-scores → crowded long/short/neutral"
 
 # ─── parameters ──────────────────────────────────────────────────────────────
@@ -74,7 +83,8 @@ MIN_SECONDS_BETWEEN_SNAPSHOTS = 60.0
 # Cross-section: only perps with real trading count, so dead markets do not distort it.
 MIN_CROSS_SECTION_VOLUME_USD = 1_000_000.0
 MIN_CROSS_SECTION_SIZE = 5
-MAD_TO_STANDARD_DEVIATION = 1.4826   # σ ≈ 1.4826 · MAD for normally distributed data
+MAD_TO_STANDARD_DEVIATION = 1.4826       # σ ≈ 1.4826 · MAD for normally distributed data
+MEAN_AD_TO_STANDARD_DEVIATION = 1.2533   # σ ≈ 1.2533 · mean absolute deviation (normal data)
 
 # Confidence: a cross-sectional read is weaker than a time-series read.
 CROSS_SECTIONAL_CONFIDENCE = 0.5
@@ -86,13 +96,14 @@ DATA_DELAY = "real-time (Hyperliquid public API, cached ≤ 15 s)"
 
 
 def make_offer() -> SellerOffer:
-    """What this demo vendor charges (0.02 AUSD) and where the AUSD goes (SELLER_PAYTO_PERPS)."""
+    """What this demo vendor charges (0.02 AUSD) and where the AUSD goes (SELLER_PAYTO_PERPS).
+    Raises SellerConfigError if that address is empty or invalid."""
     return SellerOffer(
         seller_id=SELLER_ID,
         path=SELLER_PATH,
         description=DESCRIPTION,
         price_atomic=PRICE_ATOMIC,
-        pay_to=get_settings().seller_payto_perps,
+        pay_to=require_payout_address(get_settings().seller_payto_perps, PAYOUT_SETTING_NAME),
     )
 
 
@@ -111,19 +122,37 @@ def zscore(value: float, samples: list[float]) -> float:
     return (value - statistics.fmean(samples)) / spread
 
 
+def robust_spread(samples: list[float]) -> float:
+    """
+    Outlier-resistant estimate of the standard deviation of `samples`:
+
+        1.4826 · MAD,       MAD = median(|x − median|)        (normal case)
+        1.2533 · MeanAD,    MeanAD = mean(|x − median|)       (when MAD = 0)
+
+    MAD is 0 whenever more than half the samples are identical — common for
+    Hyperliquid funding, which many coins sit on at exactly the baseline rate.
+    Returns 0.0 only when every sample is identical.
+    """
+    center = statistics.median(samples)
+    deviations = [abs(sample - center) for sample in samples]
+    mad = statistics.median(deviations)
+    if mad > 0:
+        return MAD_TO_STANDARD_DEVIATION * mad
+    return MEAN_AD_TO_STANDARD_DEVIATION * statistics.fmean(deviations)
+
+
 def robust_zscore(value: float, samples: list[float]) -> float:
     """
-    Robust z-score: (value − median) / (1.4826 · MAD), MAD = median(|x − median|).
-    Outliers barely move the median or MAD, so one wild small-cap funding rate
-    cannot hide BTC's signal. Returns 0.0 when MAD is 0 or there are < 2 samples.
+    Robust z-score: (value − median) / robust_spread(samples).
+    Outliers barely move the median or the spread, so one wild small-cap funding
+    rate cannot hide BTC's signal. Returns 0.0 with < 2 samples or no spread at all.
     """
     if len(samples) < 2:
         return 0.0
-    center = statistics.median(samples)
-    mad = statistics.median([abs(sample - center) for sample in samples])
-    if mad == 0:
+    spread = robust_spread(samples)
+    if spread == 0:
         return 0.0
-    return (value - center) / (MAD_TO_STANDARD_DEVIATION * mad)
+    return (value - statistics.median(samples)) / spread
 
 
 def fractional_change(old: float, new: float) -> float | None:
@@ -244,6 +273,7 @@ class AssetCrowding:
     confidence: float
 
     def to_dict(self) -> dict:
+        """Plain JSON form of this row."""
         return asdict(self)
 
 
@@ -415,7 +445,13 @@ def build_response(
 
 
 async def compute(params: dict) -> dict:
-    """Fetch Hyperliquid, score the requested assets, then remember this snapshot for next time."""
+    """
+    Fetch Hyperliquid, score the requested assets, then remember this snapshot for next time.
+
+    Raises ValueError for bad parameters or when no requested asset is listed (a buyer
+    error, so the x402 server should answer 400 without settling), and UpstreamError
+    when Hyperliquid is unreachable.
+    """
     wanted = parse_assets_param(params)
     contexts = await fetch_perp_contexts()
     now = datetime.now(timezone.utc)
@@ -424,3 +460,19 @@ async def compute(params: dict) -> dict:
     if not rows:
         raise ValueError(f"none of {wanted} is a listed Hyperliquid perp")
     return build_response(wanted, rows, not_found, len(cross_section(contexts)), now)
+
+
+async def sample_now() -> int:
+    """
+    Free background snapshot (no buyer, no payment): fetch Hyperliquid and add one
+    snapshot per asset to the rolling window. Returns how many perps were seen.
+    A scheduler may call this every few minutes so time-series scores are ready sooner.
+    """
+    contexts = await fetch_perp_contexts()
+    _HISTORY.record_all(contexts, datetime.now(timezone.utc).timestamp())
+    return len(contexts)
+
+
+def reset_history() -> None:
+    """Forget the in-memory window (tests, or after a long outage)."""
+    _HISTORY.clear()

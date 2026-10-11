@@ -2,6 +2,7 @@
 pragma solidity 0.8.24;
 
 import {Test} from "forge-std/Test.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
 import {MockAUSD} from "../src/mocks/MockAUSD.sol";
 
@@ -10,7 +11,8 @@ import {MockAUSD} from "../src/mocks/MockAUSD.sol";
  * @notice Proves the local-test token behaves like the real AUSD where PocketDesk depends on it:
  *         ERC-20 metadata (name "AUSD", 6 decimals), the "Agora Dollar" / "1" EIP-712 domain, ERC-2612
  *         permit, the faucet, freezing, and a faithful ERC-3009 (both signature overloads, replay,
- *         strict validity window, wrong signer, receive-only-by-payee, cancel). One test replays a
+ *         strict validity window, wrong signer, receive-only-by-payee, cancel), and the test-only
+ *         token-wide pause that the backend's payment circuit breaker reacts to. One test replays a
  *         signature produced by backend/app/chain/eip712.py, so the Python signer and the token agree.
  *
  * Each test follows Arrange / Act / Assert. Digests are built here from the ERC-3009 spec.
@@ -435,6 +437,54 @@ contract MockAUSDTest is Test {
         // Assert
         assertTrue(transferred);
         assertFalse(token.isAccountFrozen(payer));
+        assertEq(token.balanceOf(seller), PAYMENT);
+    }
+
+    function test_freeze_and_unfreeze_shorthands_toggle_the_freeze_list() public {
+        // Act + Assert
+        token.freeze(payer);
+        assertTrue(token.isAccountFrozen(payer));
+
+        token.unfreeze(payer);
+        assertFalse(token.isAccountFrozen(payer));
+    }
+
+    // ═══ token-wide pause (what the backend's global circuit breaker detects) ══════════════
+
+    function test_paused_token_blocks_transfers_and_erc3009_payments() public {
+        // Arrange
+        Authorization memory auth = _freshAuthorization(keccak256("nonce-paused"));
+        bytes memory signature = _packedSignature(PAYER_PRIVATE_KEY, TRANSFER_TYPEHASH, auth);
+
+        // Act
+        token.pause();
+
+        // Assert: paused() is readable, and every balance change reverts with EnforcedPause().
+        assertTrue(token.paused());
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        vm.prank(payer);
+        // forge-lint: disable-next-line(erc20-unchecked-transfer) — the call reverts, nothing to check
+        token.transfer(seller, PAYMENT);
+
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        _submitTransfer(auth, signature);
+        assertFalse(token.authorizationState(payer, auth.nonce)); // the nonce stays unused
+    }
+
+    function test_unpaused_token_accepts_the_same_authorization_again() public {
+        // Arrange: a payment is refused while paused.
+        Authorization memory auth = _freshAuthorization(keccak256("nonce-resume"));
+        bytes memory signature = _packedSignature(PAYER_PRIVATE_KEY, TRANSFER_TYPEHASH, auth);
+        token.pause();
+        vm.expectRevert(Pausable.EnforcedPause.selector);
+        _submitTransfer(auth, signature);
+
+        // Act
+        token.unpause();
+        _submitTransfer(auth, signature);
+
+        // Assert
+        assertFalse(token.paused());
         assertEq(token.balanceOf(seller), PAYMENT);
     }
 

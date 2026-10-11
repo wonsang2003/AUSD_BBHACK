@@ -28,6 +28,7 @@ This module never imports the x402 server; `app/sellers/routers.py` wraps `compu
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -36,6 +37,7 @@ from app.config import get_settings
 from app.data import edgar
 from app.data.edgar import EdgarError, Filing, InsiderTransaction
 from app.data.http import UpstreamError
+from app.sellers.expected_move import require_payout_address
 from app.x402.offer import SellerOffer
 
 # ─── offer ───────────────────────────────────────────────────────────────────
@@ -43,6 +45,7 @@ from app.x402.offer import SellerOffer
 SELLER_ID = "insider_cluster"
 SELLER_PATH = "/sell/insider-cluster"
 PRICE_ATOMIC = 30_000  # 0.03 AUSD (6 decimals)
+PAYOUT_SETTING_NAME = "SELLER_PAYTO_INSIDER"   # .env variable holding this seller's payout address
 DESCRIPTION = "Insider cluster (demo vendor): SEC Form 4 open-market purchases by ≥2 insiders within 10 days"
 
 # ─── rules ───────────────────────────────────────────────────────────────────
@@ -62,13 +65,14 @@ DATA_DELAY = "Form 4 is due within 2 business days of the trade; EDGAR posts fil
 
 
 def make_offer() -> SellerOffer:
-    """What this demo vendor charges (0.03 AUSD) and where the AUSD goes (SELLER_PAYTO_INSIDER)."""
+    """What this demo vendor charges (0.03 AUSD) and where the AUSD goes (SELLER_PAYTO_INSIDER).
+    Raises SellerConfigError if that address is empty or invalid."""
     return SellerOffer(
         seller_id=SELLER_ID,
         path=SELLER_PATH,
         description=DESCRIPTION,
         price_atomic=PRICE_ATOMIC,
-        pay_to=get_settings().seller_payto_insider,
+        pay_to=require_payout_address(get_settings().seller_payto_insider, PAYOUT_SETTING_NAME),
     )
 
 
@@ -248,8 +252,10 @@ def parse_params(params: dict) -> tuple[str, int]:
     ticker = str(params.get("ticker") or "").strip().upper()
     if not TICKER_PATTERN.match(ticker):
         raise ValueError("ticker is required, e.g. ticker=NVDA")
-    raw_days = params.get("days")
-    days = int(raw_days) if raw_days not in (None, "") else DEFAULT_LOOKBACK_DAYS
+    raw_days = str(params.get("days") or "").strip()
+    if raw_days and not raw_days.isdigit():
+        raise ValueError("days must be a whole number of days")
+    days = int(raw_days) if raw_days else DEFAULT_LOOKBACK_DAYS
     if not 1 <= days <= MAX_LOOKBACK_DAYS:
         raise ValueError(f"days must be between 1 and {MAX_LOOKBACK_DAYS}")
     return ticker, days
@@ -260,8 +266,34 @@ def filings_in_lookback(filings: list[Filing], since: date) -> list[Filing]:
     return [filing for filing in filings if filing.filing_date >= since]
 
 
+async def read_form4_transactions(cik: int, filings: list[Filing]) -> tuple[list[InsiderTransaction], list[str]]:
+    """
+    Download and parse the given Form 4s concurrently. The shared HTTP helper still
+    spaces EDGAR request starts ≥ 0.12 s apart, so SEC's 10 requests/second limit holds.
+    A filing that fails to download or parse is reported in the error list and skipped.
+    """
+    results = await asyncio.gather(
+        *(edgar.fetch_form4_transactions(cik, filing) for filing in filings), return_exceptions=True
+    )
+    transactions: list[InsiderTransaction] = []
+    errors: list[str] = []
+    for filing, result in zip(filings, results):
+        if isinstance(result, (UpstreamError, EdgarError)):
+            errors.append(f"{filing.accession_number}: {result}")
+        elif isinstance(result, BaseException):
+            raise result  # a bug, not an upstream problem: do not hide it
+        else:
+            transactions.extend(result)
+    return transactions, errors
+
+
 async def compute(params: dict) -> dict:
-    """Resolve the ticker, read recent Form 4s from EDGAR, and look for a buying cluster."""
+    """
+    Resolve the ticker, read recent Form 4s from EDGAR, and look for a buying cluster.
+
+    Raises ValueError for a bad or unknown ticker (buyer error → 400, no settlement) and
+    UpstreamError when EDGAR itself is unreachable.
+    """
     ticker, lookback_days = parse_params(params)
     now = datetime.now(timezone.utc)
     since = now.date() - timedelta(days=lookback_days)
@@ -271,13 +303,7 @@ async def compute(params: dict) -> dict:
         raise ValueError(str(exc)) from exc
     recent = filings_in_lookback(await edgar.fetch_recent_form4_filings(cik), since)
     to_read = recent[:MAX_FORM4_FILINGS]
-    transactions: list[InsiderTransaction] = []
-    errors: list[str] = []
-    for filing in to_read:
-        try:
-            transactions.extend(await edgar.fetch_form4_transactions(cik, filing))
-        except (UpstreamError, EdgarError) as exc:
-            errors.append(f"{filing.accession_number}: {exc}")
+    transactions, errors = await read_form4_transactions(cik, to_read)
     return build_response(
         ticker=ticker,
         cik=cik,

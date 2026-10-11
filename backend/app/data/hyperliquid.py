@@ -19,6 +19,11 @@ Units (Hyperliquid conventions):
                    positive → longs pay shorts
     openInterest   in coins (base units), so OI in USD = openInterest · markPx
     dayNtlVlm      last-24h traded notional in USD
+    midPx          order-book mid price in USD (null when the book is one-sided)
+    prevDayPx      price 24 h ago, used for the market strip's 24 h change
+
+Two callers share the one cached request: the `perps_crowding` seller (funding + OI)
+and the dashboard market strip in `app/data/market.py` (mid price + 24 h change).
 
 The fetch (network) is separate from `parse_meta_and_asset_ctxs` (pure), which the
 tests exercise with a recorded-shape fixture.
@@ -40,6 +45,7 @@ FUNDING_PERIODS_PER_YEAR = 24 * 365
 
 # Live contexts change constantly; a short cache only de-duplicates bursts of calls.
 CONTEXTS_CACHE_TTL_SECONDS = 15.0
+PERCENT = 100.0
 
 
 @dataclass(frozen=True)
@@ -50,6 +56,7 @@ class PerpContext:
     funding_hourly: float          # fraction per hour; > 0 means longs pay shorts
     open_interest_coins: float     # open interest in base units (coins)
     mark_px: float                 # mark price in USD
+    mid_px: float | None           # order-book mid price in USD, if the book is two-sided
     oracle_px: float | None        # oracle (index) price in USD, if given
     day_notional_volume_usd: float # last-24h notional volume in USD
     prev_day_px: float | None      # price 24 h ago, if given
@@ -63,6 +70,18 @@ class PerpContext:
     def funding_annualized(self) -> float:
         """Simple (non-compounded) annualised funding = hourly rate · 24 · 365."""
         return self.funding_hourly * FUNDING_PERIODS_PER_YEAR
+
+    @property
+    def display_px(self) -> float:
+        """Price to show a person: the book mid when there is one, else the mark price."""
+        return self.mid_px if self.mid_px is not None else self.mark_px
+
+    @property
+    def change_24h_pct(self) -> float | None:
+        """24 h change in percent = (display price / prevDayPx − 1) · 100; None without prevDayPx."""
+        if self.prev_day_px is None or self.prev_day_px <= 0:
+            return None
+        return (self.display_px / self.prev_day_px - 1.0) * PERCENT
 
 
 class HyperliquidParseError(ValueError):
@@ -105,6 +124,7 @@ def _parse_one(asset_meta: dict, context: dict) -> PerpContext | None:
         funding_hourly=float(context["funding"]),
         open_interest_coins=float(context.get("openInterest") or 0.0),
         mark_px=float(context["markPx"]),
+        mid_px=_optional_float(context.get("midPx")),
         oracle_px=_optional_float(context.get("oraclePx")),
         day_notional_volume_usd=float(context.get("dayNtlVlm") or 0.0),
         prev_day_px=_optional_float(context.get("prevDayPx")),

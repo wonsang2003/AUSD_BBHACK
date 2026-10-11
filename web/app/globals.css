@@ -1,26 +1,71 @@
+/*
+ * PocketDesk global styles: a dark, dense trading-terminal look (Tailwind CSS v4).
+ *
+ * Design tokens live in `@theme` below; Tailwind turns each `--color-*` into utilities
+ * (`bg-surface`, `border-line`, `text-fg-muted`, `text-up`, `bg-down/10`, …). Semantic colors:
+ *   up (green)   = good / bought / live         down (red) = bad / failed / paused token
+ *   warn (amber) = attention / testnet          info (blue) = neutral highlight
+ * Numbers use the `num` utility: monospace with tabular figures so columns line up.
+ *
+ * No web fonts are downloaded (system stacks only), so `next build` works offline.
+ */
+
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@theme {
+  /* surfaces, darkest first */
+  --color-bg: #07090c;
+  --color-surface: #0c1015;
+  --color-surface-2: #121820;
+  --color-line: #1d2630;
+
+  /* text */
+  --color-fg: #d6dde5;
+  --color-fg-muted: #8a95a3;
+  --color-fg-dim: #535e6b;
+
+  /* semantic accents */
+  --color-up: #22c55e;
+  --color-down: #ef4444;
+  --color-warn: #f59e0b;
+  --color-info: #38bdf8;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+@layer base {
+  html {
+    color-scheme: dark;
+  }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  body {
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  * {
+    scrollbar-color: var(--color-line) transparent;
+    scrollbar-width: thin;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--color-info) 30%, transparent);
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* Monospace, tabular figures: every amount, address, hash and timestamp. */
+@utility num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }

@@ -3,6 +3,7 @@ pragma solidity 0.8.24;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
 
 /**
@@ -24,12 +25,16 @@ import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/Signa
  *     validAfter < block.timestamp < validBefore. Signatures are checked with SignatureChecker, so
  *     smart-wallet (ERC-1271) authorizers work too.
  *   - `isAccountFrozen(address)`; transfers from or to a frozen account revert.
+ *   - A token-wide pause: while paused, every balance change (transfer, ERC-3009 payment, mint) reverts
+ *     with OpenZeppelin's `EnforcedPause()`, and `paused()` returns true. The real token's exact pause
+ *     error names are not verified here; the backend's pre-flight therefore also reads `paused()`.
  *
- * Mock-only additions (not on the real token): open `mint`, `setAccountFrozen`, and `requestFunds`, which
+ * Mock-only additions (not on the real token): open `mint`, `setAccountFrozen` / `freeze` / `unfreeze`,
+ * `pause` / `unpause` (so the payment circuit breaker can be tested on anvil), and `requestFunds`, which
  * mints FAUCET_AMOUNT like the real faucet contract does — so the backend's faucet code path also works
  * locally by pointing the faucet address at this token.
  */
-contract MockAUSD is ERC20, ERC20Permit {
+contract MockAUSD is ERC20, ERC20Permit, Pausable {
     // ─── constants ──────────────────────────────────────────────────────────────────────────
 
     string private constant TOKEN_NAME = "AUSD";
@@ -101,13 +106,40 @@ contract MockAUSD is ERC20, ERC20Permit {
     }
 
     /// @notice Freeze or unfreeze an account. Open to anyone — TEST ONLY, used to test revert handling.
-    function setAccountFrozen(address account, bool frozen) external {
+    function setAccountFrozen(address account, bool frozen) public {
         _frozen[account] = frozen;
         emit AccountFrozenSet(account, frozen);
     }
 
-    /// @dev Every balance change (transfer, mint, burn) passes here: block frozen senders and recipients.
+    /// @notice Shorthand for setAccountFrozen(account, true). TEST ONLY.
+    function freeze(address account) external {
+        setAccountFrozen(account, true);
+    }
+
+    /// @notice Shorthand for setAccountFrozen(account, false). TEST ONLY.
+    function unfreeze(address account) external {
+        setAccountFrozen(account, false);
+    }
+
+    // ─── token-wide pause ───────────────────────────────────────────────────────────────────
+
+    /// @notice Halt every balance change. Open to anyone — TEST ONLY, used to test the circuit breaker.
+    function pause() external {
+        _pause();
+    }
+
+    /// @notice Resume balance changes. Open to anyone — TEST ONLY.
+    function unpause() external {
+        _unpause();
+    }
+
+    /**
+     * @dev Every balance change (transfer, ERC-3009 payment, mint, burn) passes here.
+     *      Rules, in order: the token is not paused (EnforcedPause); the sender is not frozen;
+     *      the recipient is not frozen (AccountFrozen).
+     */
     function _update(address from, address to, uint256 value) internal override {
+        _requireNotPaused();
         if (_frozen[from]) revert AccountFrozen(from);
         if (_frozen[to]) revert AccountFrozen(to);
         super._update(from, to, value);

@@ -11,8 +11,11 @@ for the symbols PocketDesk watches. The keyless public API is rate-limited (the
 shared HTTP helper spaces "coingecko" requests ≥ 2 s apart) and its prices are
 cached upstream, so quotes can be a little stale.
 
-The paid, per-call CoinGecko x402 endpoint (mainnet USDC) is a different thing and
-lives behind LIVE_VENDOR_MODE in `app/data/x402_external.py`.
+The paid, per-call CoinGecko x402 endpoint (mainnet USDC) is a different thing: PocketDesk
+never pays it (buyer-side testnet only, SPEC §9). It appears in the catalog as an
+"external x402 (flagged)" row, and `app/x402/probe.py` only sends it UNPAID requests to
+show its live 402 price. `MarketQuote` here is also the row type `app/data/market.py`
+uses for Hyperliquid and yfinance rows, so the whole strip has one shape.
 """
 
 from __future__ import annotations

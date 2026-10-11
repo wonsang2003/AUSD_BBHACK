@@ -21,17 +21,20 @@ Why this adapter does not use app/data/http.py: yfinance makes its own HTTP call
 manages Yahoo's cookie + "crumb" session, which the raw Yahoo endpoints require and which
 http.py (one fresh client per request) cannot keep. To keep the same protections it adds a
 timeout, an in-process TTL cache, and a lock so only one yfinance call runs at a time.
-Any yfinance failure is raised as `YFinanceError`, which the seller turns into an error
-response instead of crashing.
+Any yfinance failure is raised as `YFinanceError` (an expiry that is not listed as the
+subclass `ExpiryNotListedError`, which is the buyer's mistake, not Yahoo's), and the seller
+turns it into an error response instead of crashing.
 """
 
 from __future__ import annotations
 
 import asyncio
 import math
+import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, time as clock_time, timedelta, timezone
+from datetime import datetime, timedelta, timezone
+from datetime import time as clock_time
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -70,11 +73,19 @@ PRICE_BASIS_MID = "bid_ask_mid"
 PRICE_BASIS_LAST = "last_trade"
 
 _snapshot_cache: dict[tuple[str, str], tuple[float, dict]] = {}
-_yfinance_lock = asyncio.Lock()
+
+# yfinance shares one Yahoo session per process; serialise its calls. A threading lock
+# (held inside the worker thread) instead of an asyncio lock, so it is not tied to one
+# event loop.
+_yfinance_thread_lock = threading.Lock()
 
 
 class YFinanceError(Exception):
     """yfinance failed (network, unknown ticker, no options listed, timeout ...)."""
+
+
+class ExpiryNotListedError(YFinanceError):
+    """The requested expiry is not a listed (or not a usable) option expiry for the ticker."""
 
 
 # ─── pure helpers ────────────────────────────────────────────────────────────
@@ -166,11 +177,11 @@ def choose_expiry(expiries: list[str], requested: str, now: datetime, min_hours_
     usable = [expiry for expiry in sorted(expiries) if equity_expiry_datetime(expiry) >= earliest_allowed]
     if requested == EXPIRY_NEXT:
         if not usable:
-            raise YFinanceError("no listed option expiry far enough in the future")
+            raise ExpiryNotListedError("no listed option expiry far enough in the future")
         return usable[0]
     if requested not in usable:
         listed = ", ".join(sorted(expiries)) or "none"
-        raise YFinanceError(f"expiry {requested} is not a usable listed expiry (listed: {listed})")
+        raise ExpiryNotListedError(f"expiry {requested} is not a usable listed expiry (listed: {listed})")
     return requested
 
 
@@ -199,6 +210,12 @@ def _spot_price(ticker_object: Any, underlying: dict | None) -> float:
     if spot is None or spot <= 0:
         raise YFinanceError("no spot price available")
     return spot
+
+
+def _download_snapshot_serialised(ticker: str, requested_expiry: str, now: datetime, min_hours: float) -> dict:
+    """Blocking: `_download_snapshot` while holding the process-wide yfinance lock."""
+    with _yfinance_thread_lock:
+        return _download_snapshot(ticker, requested_expiry, now, min_hours)
 
 
 def _download_snapshot(ticker: str, requested_expiry: str, now: datetime, min_hours_to_expiry: float) -> dict:
@@ -243,18 +260,19 @@ async def fetch_option_snapshot(
     if cached is not None and cached[0] > time.monotonic():
         return cached[1]
 
-    async with _yfinance_lock:
-        try:
-            snapshot = await asyncio.wait_for(
-                asyncio.to_thread(_download_snapshot, ticker.upper(), requested_expiry, now, min_hours_to_expiry),
-                timeout=YFINANCE_TIMEOUT_SECONDS,
-            )
-        except YFinanceError:
-            raise
-        except asyncio.TimeoutError as exc:
-            raise YFinanceError(f"yfinance timed out after {YFINANCE_TIMEOUT_SECONDS:.0f} s") from exc
-        except Exception as exc:  # yfinance raises many exception types; all mean "no data"
-            raise YFinanceError(f"yfinance failed: {type(exc).__name__}: {exc}") from exc
+    try:
+        snapshot = await asyncio.wait_for(
+            asyncio.to_thread(
+                _download_snapshot_serialised, ticker.upper(), requested_expiry, now, min_hours_to_expiry
+            ),
+            timeout=YFINANCE_TIMEOUT_SECONDS,
+        )
+    except YFinanceError:
+        raise
+    except TimeoutError as exc:   # asyncio.wait_for raises the builtin TimeoutError (3.11+)
+        raise YFinanceError(f"yfinance timed out after {YFINANCE_TIMEOUT_SECONDS:g} s") from exc
+    except Exception as exc:  # yfinance raises many exception types; all mean "no data"
+        raise YFinanceError(f"yfinance failed: {type(exc).__name__}: {exc}") from exc
 
     _snapshot_cache[cache_key] = (time.monotonic() + YFINANCE_CACHE_TTL_SECONDS, snapshot)
     return snapshot
