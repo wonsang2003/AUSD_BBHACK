@@ -10,7 +10,7 @@ ENV_FILE ?=
 ENV_FILE_ARG = $(if $(ENV_FILE),--env-file $(abspath $(ENV_FILE)),)
 PORT ?= 8000
 
-.PHONY: install test abi bootstrap deploy gate-m2 gate-m2-perps gate-m2-status gate-m3 gate-m3-status \
+.PHONY: install test abi bootstrap deploy gate-m2 gate-m2-perps gate-m2-status \
 	server web dev demo local-stack
 
 install:            ## install backend + web dependencies
@@ -45,13 +45,6 @@ gate-m2-perps:      ## same gate, buying from the perps demo vendor (Hyperliquid
 gate-m2-status:     ## show the recorded M2 payment (tx hash + Basescan link), or say M2 has not passed
 	@cat backend/gate_m2_result.json 2>/dev/null \
 		|| echo "M2 NOT PASSED: no backend/gate_m2_result.json yet. Run 'make gate-m2' (or 'make gate-m2-perps')."
-
-gate-m3:            ## M3 gate: permit + config -> openBudget -> allocator -> recharge, and a cap-violating recharge reverts
-	cd backend && uv run python -m scripts.gate_m3 $(ENV_FILE_ARG)
-
-gate-m3-status:     ## show the recorded M3 run (tx hashes + Basescan links), or say M3 has not passed
-	@cat backend/gate_m3_result.json 2>/dev/null \
-		|| echo "M3 NOT PASSED: no backend/gate_m3_result.json yet. Run 'make gate-m3'."
 
 server:             ## run the backend API (+ demo vendors) on :$(PORT); ENV_FILE=.env.local-anvil for the local stack
 	cd backend && uv run python -m scripts.run_server --port $(PORT) $(ENV_FILE_ARG)

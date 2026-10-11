@@ -68,7 +68,7 @@ def find_anvil() -> str:
 def start_anvil(port: int, detach: bool) -> subprocess.Popen:
     """Start anvil with chain id 84532 and wait until it answers JSON-RPC."""
     process = subprocess.Popen(
-        [find_anvil(), "--chain-id", str(BASE_SEPOLIA_CHAIN_ID), "--port", str(port), "--silent"],
+        [find_anvil(), "--chain-id", str(BASE_SEPOLIA_CHAIN_ID), "--port", str(port), "--silent", "--block-time", "1"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=detach,
     )
     w3 = Web3(Web3.HTTPProvider(f"http://127.0.0.1:{port}"))
