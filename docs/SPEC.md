@@ -131,7 +131,7 @@ class SettlementResponse(BaseModel): success: bool; transaction: str | None; net
 def encode_header(model: BaseModel) -> str     # base64(JSON, exclude_none)
 def decode_header(value: str, model_cls)        # inverse
 ```
-`app/x402/server.py`
+`app/x402/offer.py` (ALREADY WRITTEN — import `from app.x402.offer import SellerOffer`)
 ```python
 @dataclass(frozen=True)
 class SellerOffer:
@@ -142,7 +142,9 @@ class SellerOffer:
     pay_to: str               # seller payout address
     max_timeout_seconds: int = 120
     cache_ttl_seconds: int = 120
-
+```
+`app/x402/server.py`
+```python
 def make_paid_router(offer: SellerOffer, compute: Callable[[dict], Awaitable[dict]]) -> APIRouter
     # GET offer.path → x402 gate → compute(query_params) → settle → JSON + PAYMENT-RESPONSE.
     # compute results are cached per (seller_id, sorted params) for cache_ttl_seconds (cache hits still require payment).
@@ -160,8 +162,9 @@ class X402Client:
 
 ## 4. Sellers (`backend/app/sellers/`) — real computation from public data
 
-Each seller module exposes `OFFER: SellerOffer` (price, pay_to from settings, path) built by `make_offer()`,
-`async def compute(params: dict) -> dict`, and `router = make_paid_router(OFFER, compute)`. Pure math/parse functions
+Each seller module exposes `def make_offer() -> SellerOffer` (price, pay_to from settings, path) and
+`async def compute(params: dict) -> dict`. Seller modules must NOT import `app.x402.server`; the app assembles routers in
+`app/sellers/routers.py` via `make_paid_router(module.make_offer(), module.compute)`. Pure math/parse functions
 are separate from fetching so they can be unit-tested with fixture payloads in `backend/tests/fixtures/*.json`.
 Every response includes `inputs_used`, `computed_at` (ISO UTC), `method`, `confidence` (0–1), and `data_delay` where
 relevant. Upstream calls: timeout, retries with backoff, in-process cache (60–300 s), per-source rate limit.
@@ -242,3 +245,37 @@ AUSD signing domain "Agora Dollar"/"1"; decimals 6. ERC-3009 nonces random; stri
 `authorizationState` before resubmitting. Permit: read `nonces(owner)` immediately before signing; try/catch in
 openBudget. EIP-712 arrays per spec, cross-language tested. Never treat a payment as final without a receipt; show
 failures honestly. Keys: hot keys server-side, testnet only; never logged; never sent to the browser.
+
+---------------------------------------------------------------------------------------------------------------------
+
+## 9. UPDATE #1 (overrides earlier sections where they disagree)
+
+- **Buyer-side only.** PocketDesk only BUYS data. Our seller endpoints are **demo vendors** (testnet stand-ins so agents
+  have something to buy); label them "demo vendor" in UI/catalog. No vendor onboarding kit UI. `/vendors` page → `/sources`.
+- **Token registry** `backend/app/chain/tokens.py` (ALREADY WRITTEN; web mirror `web/lib/tokens.ts`): AUSD (default, budget
+  token) + USDC on Base Sepolia (verified on-chain at startup, disabled on failure). The x402 client picks the first
+  `accepts[]` requirement whose `(network, asset)` matches an enabled registry entry, preferring AUSD, and signs with that
+  token's EIP-712 domain (`TokenInfo.eip712_name/version`). Never sign for a token not in the registry. Budgets stay AUSD-only.
+- **Freeze check (compliance):** before every payment the agent/client calls `isAccountFrozen(payTo)` and
+  `isAccountFrozen(agent)`; if either is frozen → skip, reason `"skipped: counterparty frozen"`, alert. Demo sellers check
+  `isAccountFrozen(payer)` in verification. Receipts carry `compliance_checked: true` (UI badge "✓ compliance check").
+- **Pre-flight simulation (circuit breaker):** after signing an ERC-3009 authorization and BEFORE sending it, the client
+  `eth_call`s `transferWithAuthorization(...)` with that signature against the token (from any address). If it reverts, do
+  not send; classify the revert: `paused` (message/selector mentions pause, e.g. "Pausable: paused", `EnforcedPause`, any
+  error name containing "Paused") → trip the GLOBAL breaker (all agents halt, dashboard red banner "TOKEN PAUSED — agents
+  halted", Telegram alert, re-probe every 60 s, auto-resume); `frozen`, `insufficient_balance`, `expired`/`not_yet_valid`,
+  `bad_signature`, `used_nonce`, `other` → only that agent backs off. Implement in `backend/app/x402/preflight.py`
+  (`simulate_transfer_with_authorization(w3, token_address, auth, signature) -> PreflightResult(ok, kind, message)`) and a
+  `CircuitBreaker` in `backend/app/agents/breaker.py`. MockAUSD gets `pause()/unpause()` and `freeze(address)/unfreeze()` +
+  `isAccountFrozen` so this is testable on anvil.
+- **Zero-gas agents:** agents never hold ETH. bootstrap.py must not fund agents with ETH and asserts agent ETH balances are 0.
+  State API exposes per-agent `eth_balance_wei` and relayer `eth_spent_today_wei` + `tx_count_today`.
+- **Live x402 probe** (`backend/app/x402/probe.py`): send UNPAID GETs to real mainnet x402 vendors (CoinGecko
+  `/x402/simple/price`, CoinMarketCap `/x402/v3/cryptocurrency/quotes/latest`, Nansen x402, x402stock), parse the 402 with the
+  SAME parser the client uses (v2 `PAYMENT-REQUIRED` header; fallback v1 JSON body with `accepts`, `maxAmountRequired`,
+  string networks like "base"), NEVER sign or pay. Cache 10 min. API `GET /api/x402-probe` (+ `?refresh=1`).
+- **Daily vouchers ("Maximum safety" mode)** — designed, built only if time allows: user signs 7 AUSD
+  `ReceiveWithAuthorization` vouchers (to = BudgetController, one per UTC day, validAfter = dayStart − 1, validBefore = dayEnd,
+  nonce = keccak256(abi.encode("pocketdesk-voucher", owner, dayIndex, salt))); `BudgetController.redeemVoucher(owner, value,
+  validAfter, validBefore, nonce, signature, agentAddrs, amounts)` pulls via `receiveWithAuthorization` and splits to agents;
+  contract balance unchanged at end; `cancelAuthorization` for future days.
