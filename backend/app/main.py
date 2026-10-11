@@ -122,6 +122,7 @@ def mount_demo_vendors(app: FastAPI, settings: Settings, runtime: Any | None) ->
     for seller in mounted:
         app.include_router(seller.router, tags=["demo vendors"])
     seller_ids = [seller.offer.seller_id for seller in mounted]
+    app.state.demo_vendor_offers = [seller.offer for seller in mounted]
     log.info("demo vendors mounted: %s", ", ".join(seller_ids) or "none")
     return seller_ids
 

@@ -16,10 +16,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
 
-from app.api.deps import api_errors
+from app.api.deps import HTTP_UNAVAILABLE, api_errors
 from app.sellers import registry
 
 router = APIRouter(tags=["catalog"])
@@ -64,8 +64,10 @@ def probe_payload(vendors: Any, refreshed: bool) -> dict[str, Any]:
 @router.get("/api/x402-probe")
 async def x402_probe(refresh: bool = Query(False)) -> dict[str, Any]:
     """Live 402 prices of real x402 vendors (unpaid requests only)."""
-    from app.x402.probe import probe_all  # imported per call: the probe module pulls in the x402 client stack
-
+    try:
+        from app.x402.probe import probe_all  # imported per call: the probe module pulls in the x402 client stack
+    except ImportError as exc:
+        raise HTTPException(HTTP_UNAVAILABLE, f"x402 probe is not available: {exc}") from exc
     with api_errors():
         vendors = await probe_all(refresh=refresh)
     return probe_payload(vendors, refresh)
