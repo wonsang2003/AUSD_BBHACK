@@ -17,3 +17,6 @@ gate-m2:            ## M2 gate: one real x402 payment, agent -> demo vendor, on 
 
 gate-m2-perps:      ## same gate, buying from the perps demo vendor (Hyperliquid data) instead of Deribit
 	cd backend && uv run python -m scripts.gate_m2 --seller perps
+
+bootstrap:          ## create testnet wallets in .env (addresses printed, keys never printed) + on-chain checks
+	cd backend && uv run python -m scripts.bootstrap
