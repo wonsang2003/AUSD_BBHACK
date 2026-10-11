@@ -231,7 +231,7 @@ def api_errors() -> Iterator[None]:
         raise HTTPException(HTTP_BAD_GATEWAY, f"upstream failed: {redact_urls(str(exc))}") from exc
     except RuntimeError as exc:
         raise HTTPException(HTTP_CONFLICT, redact_urls(str(exc))) from exc
-    except Exception as exc:  # noqa: BLE001 — anything else still answers a readable {detail}
+    except Exception as exc:  # anything else still answers a readable {detail}
         log.exception("unexpected error in an API handler")
         raise HTTPException(HTTP_INTERNAL_ERROR, readable_error(exc)) from exc
 

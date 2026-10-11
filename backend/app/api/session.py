@@ -21,7 +21,13 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.api.deps import HTTP_CONFLICT, api_errors, call_blocking, get_runtime, stored_owner
+from app.api.deps import (
+    HTTP_CONFLICT,
+    api_errors,
+    call_blocking,
+    get_runtime,
+    stored_owner,
+)
 
 router = APIRouter(tags=["session"])
 
