@@ -73,8 +73,16 @@ def parse_fred_csv(text: str, series_id: str) -> list[Observation]:
     for row in rows[1:]:
         if len(row) != EXPECTED_COLUMN_COUNT or row[1].strip() in MISSING_VALUE_MARKERS:
             continue
-        observations.append(Observation(on=date.fromisoformat(row[0].strip()), value=float(row[1])))
+        observations.append(_parse_row(row, series_id))
     return sorted(observations, key=lambda observation: observation.on)
+
+
+def _parse_row(row: list[str], series_id: str) -> Observation:
+    """One `date,value` row → Observation; a malformed date or number raises FredError."""
+    try:
+        return Observation(on=date.fromisoformat(row[0].strip()), value=float(row[1]))
+    except ValueError as exc:
+        raise FredError(f"malformed {series_id} row {row!r}: {exc}") from exc
 
 
 def latest(observations: list[Observation]) -> Observation:

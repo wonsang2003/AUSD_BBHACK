@@ -9,7 +9,8 @@
 #   backend/app/chain/abi/MockAUSD.json           {"abi": [...], "bytecode": "0x..."}
 #
 # Usage:   contracts/script/export_abi.sh
-# Offline: FOUNDRY_SOLC=/path/to/solc-0.8.24 contracts/script/export_abi.sh
+#          FOUNDRY_SOLC=/path/to/solc-0.8.24 contracts/script/export_abi.sh   (if solc is not cached)
+# forge runs with --offline: the build never needs network access (OZ + forge-std are vendored in lib/).
 # Uses jq when available, otherwise python3.
 set -euo pipefail
 
@@ -45,7 +46,7 @@ PY
 }
 
 cd "$CONTRACTS_DIR"
-forge build
+forge build --offline
 
 mkdir -p "$ABI_OUT_DIR"
 for name in "${CONTRACT_NAMES[@]}"; do

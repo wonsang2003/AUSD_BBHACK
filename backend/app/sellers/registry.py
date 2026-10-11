@@ -16,7 +16,11 @@ PocketDesk is BUYER-SIDE ONLY, so the catalog is honest about what each row real
 
 Demo-vendor rows take their price, path, description and payout address from each seller
 module's `make_offer()` — the single source of truth — so the catalog can never show a
-different price from the one the x402 gate charges. Everything else is a static row.
+different price from the one the x402 gate charges. When a seller's payout address is not
+configured yet (`SellerConfigError`), its row still shows the module's price and path, with
+`pay_to` None and a note saying which setting to fill in. Everything else is a static row.
+
+Entry points: `list_catalog() -> [CatalogEntry]` and `catalog_json() -> [dict]` (`to_api()` rows).
 
 `trader_value` is a rough S / A / B rating of how much the data matters to a trader
 (S = moves decisions on its own, A = strong supporting input, B = context).
@@ -27,7 +31,10 @@ from __future__ import annotations
 import importlib
 from dataclasses import asdict, dataclass
 
+from types import ModuleType
+
 from app.constants import ONE_AUSD
+from app.sellers.expected_move import SellerConfigError
 from app.x402.offer import SellerOffer
 
 # ─── vocabularies ────────────────────────────────────────────────────────────
@@ -93,9 +100,13 @@ class CatalogEntry:
     pay_to: str | None = None         # payout address — demo vendors only
     notes: str = ""
 
-    def to_dict(self) -> dict:
-        """Plain JSON form of this row."""
+    def to_api(self) -> dict:
+        """Plain JSON form of this row (the `/api/catalog` row)."""
         return asdict(self)
+
+    def to_dict(self) -> dict:
+        """Alias of `to_api()`."""
+        return self.to_api()
 
 
 # ─── demo vendors (ours, priced by make_offer) ───────────────────────────────
@@ -130,20 +141,24 @@ DEMO_VENDORS: dict[str, DemoVendorInfo] = {
 }
 
 
-def load_offer(seller_id: str) -> SellerOffer | None:
+def load_seller_module(seller_id: str) -> ModuleType | None:
     """
-    The demo vendor's live offer from `app.sellers.<seller_id>.make_offer()`.
-    Returns None only when that seller module does not exist (not built yet); any
-    other import error is a bug and is raised.
+    The demo vendor's module `app.sellers.<seller_id>`. Returns None only when that module
+    does not exist (not built yet); any other import error is a bug and is raised.
     """
     module_name = f"{SELLERS_PACKAGE}.{seller_id}"
     try:
-        module = importlib.import_module(module_name)
+        return importlib.import_module(module_name)
     except ModuleNotFoundError as exc:
         if exc.name == module_name:
             return None
         raise
-    return module.make_offer()
+
+
+def load_offer(seller_id: str) -> SellerOffer | None:
+    """The demo vendor's live offer from its `make_offer()`; None if the module is missing."""
+    module = load_seller_module(seller_id)
+    return module.make_offer() if module is not None else None
 
 
 def format_ausd(price_atomic: int) -> str:
@@ -151,40 +166,50 @@ def format_ausd(price_atomic: int) -> str:
     return f"{price_atomic / ONE_AUSD:.2f} AUSD (testnet)"
 
 
-def demo_vendor_entry(info: DemoVendorInfo) -> CatalogEntry:
-    """A demo-vendor row priced from its SellerOffer (or marked "not built yet" if the module is missing)."""
-    offer = load_offer(info.seller_id)
-    if offer is None:
-        return CatalogEntry(
-            id=info.seller_id,
-            name=info.name,
-            sector=info.sector,
-            description=f"{info.name} (demo vendor)",
-            trader_value=info.trader_value,
-            source=info.source,
-            pricing_model=PRICING_PER_CALL_X402,
-            payable_mode=PAYABLE_X402_AUSD_TESTNET,
-            price="not built yet",
-            status=STATUS_LIVE_AUSD_SELLER,
-            label=LABEL_DEMO_VENDOR,
-            notes=f"seller module {SELLERS_PACKAGE}.{info.seller_id} is not installed",
-        )
+DEMO_VENDOR_NOTE = "Testnet stand-in so agents have something real to buy; paid per call in test AUSD via x402."
+
+
+def _demo_row(info: DemoVendorInfo, description: str, price: str, notes: str, **offer_fields) -> CatalogEntry:
+    """The fields every demo-vendor row shares, plus its offer-specific ones."""
     return CatalogEntry(
-        id=offer.seller_id,
+        id=info.seller_id,
         name=info.name,
         sector=info.sector,
-        description=offer.description,
+        description=description,
         trader_value=info.trader_value,
         source=info.source,
         pricing_model=PRICING_PER_CALL_X402,
         payable_mode=PAYABLE_X402_AUSD_TESTNET,
-        price=format_ausd(offer.price_atomic),
+        price=price,
         status=STATUS_LIVE_AUSD_SELLER,
         label=LABEL_DEMO_VENDOR,
-        price_atomic=offer.price_atomic,
-        path=offer.path,
-        pay_to=offer.pay_to or None,
-        notes="Testnet stand-in so agents have something real to buy; paid per call in test AUSD via x402.",
+        notes=notes,
+        **offer_fields,
+    )
+
+
+def _unconfigured_demo_row(info: DemoVendorInfo, module: ModuleType, reason: str) -> CatalogEntry:
+    """A demo vendor whose payout address is not set: price and path from module constants, pay_to None."""
+    price_atomic = int(module.PRICE_ATOMIC)
+    return _demo_row(
+        info, module.OFFER_DESCRIPTION, format_ausd(price_atomic), f"Not payable yet: {reason}",
+        price_atomic=price_atomic, path=module.OFFER_PATH, pay_to=None,
+    )
+
+
+def demo_vendor_entry(info: DemoVendorInfo) -> CatalogEntry:
+    """A demo-vendor row priced from its SellerOffer (or marked "not built yet" if the module is missing)."""
+    module = load_seller_module(info.seller_id)
+    if module is None:
+        notes = f"seller module {SELLERS_PACKAGE}.{info.seller_id} is not installed"
+        return _demo_row(info, f"{info.name} (demo vendor)", "not built yet", notes)
+    try:
+        offer = module.make_offer()
+    except SellerConfigError as exc:
+        return _unconfigured_demo_row(info, module, str(exc))
+    return _demo_row(
+        info, offer.description, format_ausd(offer.price_atomic), DEMO_VENDOR_NOTE,
+        price_atomic=offer.price_atomic, path=offer.path, pay_to=offer.pay_to or None,
     )
 
 
@@ -346,4 +371,4 @@ def list_catalog() -> list[CatalogEntry]:
 
 def catalog_json() -> list[dict]:
     """`list_catalog()` as JSON rows for `GET /api/catalog`."""
-    return [entry.to_dict() for entry in list_catalog()]
+    return [entry.to_api() for entry in list_catalog()]

@@ -35,9 +35,11 @@ import type {
   Settings,
   State,
   TxResponse,
+  TypedDataListResponse,
   TypedDataResponse,
   Voucher,
   VoucherCancelRequest,
+  VoucherCancelResponse,
   VoucherPrepareCancelRequest,
   VoucherPrepareRequest,
   VoucherPrepareResponse,
@@ -233,7 +235,7 @@ export function saveSettings(settings: Settings): Promise<Settings> {
 
 // ─── daily vouchers (Update #1 D, "Maximum safety" mode) ─────────────────────
 
-/** One ReceiveWithAuthorization message per UTC day, to be signed unchanged. */
+/** 7 ReceiveWithAuthorization messages (one per UTC day) + the BudgetConfig, to be signed unchanged. */
 export function prepareVouchers(body: VoucherPrepareRequest): Promise<VoucherPrepareResponse> {
   return post<VoucherPrepareResponse>("/api/vouchers/prepare", body);
 }
@@ -242,16 +244,18 @@ export function submitVouchers(body: VoucherSubmitRequest): Promise<VoucherSubmi
   return post<VoucherSubmitResponse>("/api/vouchers/submit", body);
 }
 
-export function listVouchers(owner?: string): Promise<Voucher[]> {
+/** The owner's vouchers. Accepts a plain list or `{vouchers: [...]}`. */
+export async function listVouchers(owner?: string): Promise<Voucher[]> {
   const query = owner ? `?owner=${encodeURIComponent(owner)}` : "";
-  return get<Voucher[]>(`/api/vouchers${query}`);
+  const body = await get<Voucher[] | { vouchers: Voucher[] }>(`/api/vouchers${query}`);
+  return Array.isArray(body) ? body : body.vouchers;
 }
 
-/** A CancelAuthorization for a future day's voucher nonce. */
-export function prepareCancelVoucher(body: VoucherPrepareCancelRequest): Promise<TypedDataResponse> {
-  return post<TypedDataResponse>("/api/vouchers/prepare-cancel", body);
+/** One CancelAuthorization message per future day's voucher nonce. */
+export function prepareCancelVouchers(body: VoucherPrepareCancelRequest): Promise<TypedDataListResponse> {
+  return post<TypedDataListResponse>("/api/vouchers/prepare-cancel", body);
 }
 
-export function cancelVoucher(body: VoucherCancelRequest): Promise<TxResponse> {
-  return post<TxResponse>("/api/vouchers/cancel", body);
+export function cancelVouchers(body: VoucherCancelRequest): Promise<VoucherCancelResponse> {
+  return post<VoucherCancelResponse>("/api/vouchers/cancel", body);
 }

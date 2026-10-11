@@ -31,22 +31,30 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import asdict, dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 
 from app.config import get_settings
 from app.data import edgar
 from app.data.edgar import EdgarError, Filing, InsiderTransaction
 from app.data.http import UpstreamError
-from app.sellers.expected_move import require_payout_address
+from app.sellers.expected_move import (
+    ERROR_BAD_REQUEST,
+    ERROR_NO_DATA,
+    ERROR_UPSTREAM,
+    error_response,
+    iso_utc,
+    require_payout_address,
+    utc_now,
+)
 from app.x402.offer import SellerOffer
 
 # ─── offer ───────────────────────────────────────────────────────────────────
 
 SELLER_ID = "insider_cluster"
-SELLER_PATH = "/sell/insider-cluster"
+OFFER_PATH = "/sell/insider-cluster"
 PRICE_ATOMIC = 30_000  # 0.03 AUSD (6 decimals)
 PAYOUT_SETTING_NAME = "SELLER_PAYTO_INSIDER"   # .env variable holding this seller's payout address
-DESCRIPTION = "Insider cluster (demo vendor): SEC Form 4 open-market purchases by ≥2 insiders within 10 days"
+OFFER_DESCRIPTION = "Insider cluster (demo vendor): SEC Form 4 open-market purchases by ≥2 insiders within 10 days"
 
 # ─── rules ───────────────────────────────────────────────────────────────────
 
@@ -69,8 +77,8 @@ def make_offer() -> SellerOffer:
     Raises SellerConfigError if that address is empty or invalid."""
     return SellerOffer(
         seller_id=SELLER_ID,
-        path=SELLER_PATH,
-        description=DESCRIPTION,
+        path=OFFER_PATH,
+        description=OFFER_DESCRIPTION,
         price_atomic=PRICE_ATOMIC,
         pay_to=require_payout_address(get_settings().seller_payto_insider, PAYOUT_SETTING_NAME),
     )
@@ -239,8 +247,8 @@ def build_response(
             "form4_parsed": filings_parsed,
             "errors": errors,
         },
-        "computed_at": now.isoformat(timespec="seconds"),
-        "confidence": confidence_for(filings_attempted, filings_parsed, truncated),
+        "computed_at": iso_utc(now),
+        "confidence": round(confidence_for(filings_attempted, filings_parsed, truncated), 2),
         "data_delay": DATA_DELAY,
     }
 
@@ -288,22 +296,38 @@ async def read_form4_transactions(cik: int, filings: list[Filing]) -> tuple[list
 
 
 async def compute(params: dict) -> dict:
+    """Answer one paid request now (the x402 server calls this); see `compute_at`."""
+    return await compute_at(params, utc_now())
+
+
+async def compute_at(params: dict, now: datetime) -> dict:
     """
     Resolve the ticker, read recent Form 4s from EDGAR, and look for a buying cluster.
 
-    Raises ValueError for a bad or unknown ticker (buyer error → 400, no settlement) and
-    UpstreamError when EDGAR itself is unreachable.
+    Never raises for bad input or upstream failure: a bad or unknown ticker, an unreachable
+    EDGAR, or Form 4s that all fail to parse come back as {"error", "error_kind", ...} with
+    confidence 0 (the buyer is not charged).
     """
-    ticker, lookback_days = parse_params(params)
-    now = datetime.now(timezone.utc)
+    try:
+        ticker, lookback_days = parse_params(params)
+    except ValueError as exc:
+        return error_response(params, str(exc), ERROR_BAD_REQUEST, now, DATA_DELAY)
     since = now.date() - timedelta(days=lookback_days)
     try:
         cik = await edgar.fetch_cik_for_ticker(ticker)
     except EdgarError as exc:
-        raise ValueError(str(exc)) from exc
-    recent = filings_in_lookback(await edgar.fetch_recent_form4_filings(cik), since)
+        return error_response(params, str(exc), ERROR_BAD_REQUEST, now, DATA_DELAY)
+    except UpstreamError as exc:
+        return error_response(params, f"SEC EDGAR unavailable: {exc}", ERROR_UPSTREAM, now, DATA_DELAY)
+    try:
+        recent = filings_in_lookback(await edgar.fetch_recent_form4_filings(cik), since)
+    except (UpstreamError, EdgarError) as exc:
+        return error_response(params, f"SEC EDGAR submissions unavailable: {exc}", ERROR_UPSTREAM, now, DATA_DELAY)
     to_read = recent[:MAX_FORM4_FILINGS]
     transactions, errors = await read_form4_transactions(cik, to_read)
+    if to_read and len(errors) == len(to_read):
+        message = f"none of the {len(to_read)} Form 4 filings could be read: {errors[:3]}"
+        return error_response(params, message, ERROR_NO_DATA, now, DATA_DELAY)
     return build_response(
         ticker=ticker,
         cik=cik,

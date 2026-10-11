@@ -9,6 +9,22 @@ import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/Signa
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /**
+ * @notice The one ERC-3009 function the voucher mode needs: the payee (`to`) pulls a signed payment.
+ * @dev The `bytes signature` overload, so both EOA (65-byte) and ERC-1271 smart-wallet signatures work.
+ */
+interface IERC3009Receive {
+    function receiveWithAuthorization(
+        address from,
+        address to,
+        uint256 value,
+        uint256 validAfter,
+        uint256 validBefore,
+        bytes32 nonce,
+        bytes calldata signature
+    ) external;
+}
+
+/**
  * @title  BudgetController
  * @notice PocketDesk's on-chain spending guard. A user grants this contract a capped, revocable AUSD
  *         allowance (ERC-2612 permit). That allowance can only ever flow to the user's own registered
@@ -27,6 +43,19 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
  *   5. The user stays in control: pause / resume (`setPaused`, or gasless `setPausedWithSig`),
  *      change caps or agents (`updateConfigWithSig`), or revoke everything by signing a permit
  *      with value 0, which the keeper submits straight to the token.
+ *
+ * "Maximum safety" daily-voucher mode (docs/SPEC.md §9, Update #1 D) replaces the standing
+ * allowance with one pre-signed ERC-3009 `ReceiveWithAuthorization` per UTC day:
+ *   1. The user signs a BudgetConfig (as above) and up to 7 vouchers, each paying `value` AUSD
+ *      to this contract and valid only during its UTC day
+ *      (validAfter = dayStart − 1, validBefore = dayEnd,
+ *       nonce = keccak256(abi.encode("pocketdesk-voucher", owner, dayIndex, salt))).
+ *   2. The keeper opens the budget with `openVoucherBudget` (no permit, no allowance).
+ *   3. Once per day the keeper calls `redeemVoucher`, which pulls exactly that day's voucher with
+ *      `receiveWithAuthorization` and splits it to the owner's agents in the same transaction,
+ *      under the same daily and per-agent caps. The contract's balance is unchanged afterwards.
+ *   4. The user can kill any future day by cancelling its voucher on the token
+ *      (`cancelAuthorization`); at most one day's value is ever exposed.
  *
  * Typed data (must match backend/app/chain/eip712.py exactly):
  *   BudgetConfig(address owner,uint128 dailyCap,uint64 expiry,address[] agentAddrs,
@@ -63,7 +92,18 @@ contract BudgetController is EIP712, ReentrancyGuard {
     /// @dev Length of one budget "day". Day boundaries are 00:00 UTC.
     uint256 private constant SECONDS_PER_DAY = 1 days;
 
+    /// @notice Domain tag of a deterministic voucher nonce (see `voucherNonce`).
+    string public constant VOUCHER_NONCE_TAG = "pocketdesk-voucher";
+
     // ─── types ──────────────────────────────────────────────────────────────────────────────
+
+    /// @notice How a budget is funded.
+    /// @dev PERMIT  = standing ERC-2612 allowance; the keeper tops agents up with `recharge`.
+    ///      VOUCHER = one signed ERC-3009 voucher per UTC day; the keeper calls `redeemVoucher`.
+    enum BudgetMode {
+        PERMIT,
+        VOUCHER
+    }
 
     /// @notice One user's budget. `spentToday` counts what was recharged on day `dayIndex`.
     struct Budget {
@@ -74,6 +114,7 @@ contract BudgetController is EIP712, ReentrancyGuard {
         bool paused; // owner's kill switch
         bool exists; // true once `openBudget` succeeded
         uint256 cfgNonce; // replay counter shared by BudgetConfig and SetPaused signatures
+        BudgetMode mode; // PERMIT (allowance + recharge) or VOUCHER (daily vouchers + redeemVoucher)
     }
 
     /// @notice One agent wallet registered under an owner's budget.
@@ -131,6 +172,8 @@ contract BudgetController is EIP712, ReentrancyGuard {
     );
     event Paused(address indexed owner, bool paused);
     event KeeperChanged(address indexed previousKeeper, address indexed newKeeper);
+    event VoucherBudgetOpened(address indexed owner, uint128 dailyCap, uint64 expiry, uint256 agentCount);
+    event VoucherRedeemed(address indexed owner, uint64 indexed dayIndex, uint256 value);
 
     // ─── errors ─────────────────────────────────────────────────────────────────────────────
 
@@ -152,6 +195,10 @@ contract BudgetController is EIP712, ReentrancyGuard {
     error DuplicateAgent(); // the same agent address appears twice in one config
     error TooManyAgents(); // config lists more than MAX_AGENTS agents
     error InvalidAgent(); // agent address is this contract (funds would be stuck here)
+    error WrongBudgetMode(); // recharge called on a VOUCHER-mode budget (it has no standing allowance)
+    error VoucherNotForToday(); // voucher window is not exactly today's UTC day (dayStart − 1, dayEnd)
+    error VoucherSplitMismatch(); // sum(amounts) != voucher value
+    error ControllerBalanceChanged(); // a redemption left AUSD behind in (or took it from) this contract
 
     // ─── modifiers ──────────────────────────────────────────────────────────────────────────
 
@@ -206,14 +253,22 @@ contract BudgetController is EIP712, ReentrancyGuard {
         _tryPermit(owner, permitValue, permitDeadline, v, r, s);
         if (ausd.allowance(owner, address(this)) < cfg.dailyCap) revert InsufficientAllowance();
 
-        Budget storage budget = budgets[owner];
-        budget.dailyCap = cfg.dailyCap;
-        budget.expiry = cfg.expiry;
-        budget.paused = false;
-        budget.exists = true;
-        _replaceAgents(cfg);
-
+        _activateBudget(cfg, BudgetMode.PERMIT);
         emit BudgetOpened(owner, cfg.dailyCap, cfg.expiry, cfg.agentAddrs.length);
+    }
+
+    /**
+     * @notice Open (or re-open) `cfg.owner`'s budget in daily-voucher mode: no permit, no allowance.
+     * @dev Same config rules as `openBudget` (signature by cfg.owner over cfg, nonce == cfgNonce,
+     *      agent validation, dropped agents deactivated, today's spend kept, un-paused).
+     *      Funds then only move through `redeemVoucher`; `recharge` reverts for this budget.
+     */
+    function openVoucherBudget(BudgetConfig calldata cfg, bytes calldata cfgSig) external onlyKeeper nonReentrant {
+        if (cfg.owner == address(0)) revert ZeroAddress();
+        _consumeConfigSignature(cfg, cfgSig);
+
+        _activateBudget(cfg, BudgetMode.VOUCHER);
+        emit VoucherBudgetOpened(cfg.owner, cfg.dailyCap, cfg.expiry, cfg.agentAddrs.length);
     }
 
     /**
@@ -239,7 +294,7 @@ contract BudgetController is EIP712, ReentrancyGuard {
 
     /**
      * @notice Move `amount` AUSD from `owner` straight to one of their registered agent wallets.
-     * @dev Requires: budget exists, not paused, block.timestamp < expiry, agent active.
+     * @dev Requires: budget exists, not paused, block.timestamp < expiry, PERMIT mode, agent active.
      *      Day rollover: if the stored dayIndex is not today, that spend counter restarts at 0.
      *      Caps:  budget.spentToday + amount <= budget.dailyCap
      *             agent.spentToday  + amount <= agent.dailyCap
@@ -248,6 +303,7 @@ contract BudgetController is EIP712, ReentrancyGuard {
     function recharge(address owner, address agent, uint128 amount) external onlyKeeper nonReentrant {
         Budget storage budget = budgets[owner];
         _requireSpendable(budget);
+        if (budget.mode != BudgetMode.PERMIT) revert WrongBudgetMode();
         Agent storage agentCfg = agents[owner][agent];
         if (!agentCfg.active) revert AgentInactive();
 
@@ -268,6 +324,45 @@ contract BudgetController is EIP712, ReentrancyGuard {
 
         ausd.safeTransferFrom(owner, agent, amount);
         emit Recharged(owner, agent, amount, budget.spentToday, agentCfg.spentToday);
+    }
+
+    // ─── daily vouchers ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * @notice Redeem `owner`'s signed voucher for today and split it across their agents in one go.
+     * @dev Rules, in order:
+     *      1. Budget exists, not paused, block.timestamp < expiry (any mode: caps are shared).
+     *      2. The voucher window is exactly today's UTC day: validAfter == dayStart − 1 and
+     *         validBefore == dayStart + 1 day (so a voucher can only ever pay for its own day).
+     *      3. agentAddrs and amounts are parallel; every agent is active for `owner`.
+     *      4. sum(amounts) == value.
+     *      5. Caps, after the lazy day rollover:
+     *            budget.spentToday + value     <= budget.dailyCap
+     *            agent.spentToday  + amounts[i] <= agent.dailyCap   (for each agent)
+     *      6. Counters are updated, then `receiveWithAuthorization(owner → this, value)` pulls the
+     *         voucher (the token checks signature, window and nonce, and only lets `to` submit),
+     *         then each agent receives its amount.
+     *      7. This contract's AUSD balance is the same before and after (it never keeps funds).
+     */
+    function redeemVoucher(
+        address owner,
+        uint256 value,
+        uint256 validAfter,
+        uint256 validBefore,
+        bytes32 nonce,
+        bytes calldata signature,
+        address[] calldata agentAddrs,
+        uint128[] calldata amounts
+    ) external onlyKeeper nonReentrant {
+        uint64 today = _chargeVoucher(owner, value, validAfter, validBefore, agentAddrs, amounts);
+
+        uint256 balanceBefore = ausd.balanceOf(address(this));
+        IERC3009Receive(address(ausd))
+            .receiveWithAuthorization(owner, address(this), value, validAfter, validBefore, nonce, signature);
+        _payAgents(owner, agentAddrs, amounts);
+        if (ausd.balanceOf(address(this)) != balanceBefore) revert ControllerBalanceChanged();
+
+        emit VoucherRedeemed(owner, today, value);
     }
 
     // ─── pausing ────────────────────────────────────────────────────────────────────────────
@@ -347,6 +442,15 @@ contract BudgetController is EIP712, ReentrancyGuard {
         return budgets[owner].cfgNonce;
     }
 
+    /**
+     * @notice Deterministic nonce of `owner`'s voucher for UTC day `dayIndex`.
+     * @dev = keccak256(abi.encode("pocketdesk-voucher", owner, dayIndex, salt)). `salt` is a random
+     *      bytes32 chosen when the week of vouchers is signed, so nonces cannot be guessed in advance.
+     */
+    function voucherNonce(address owner, uint64 dayIndex, bytes32 salt) external pure returns (bytes32) {
+        return keccak256(abi.encode(VOUCHER_NONCE_TAG, owner, dayIndex, salt));
+    }
+
     /// @notice EIP-712 domain separator of this contract ("PocketDesk", "1", chainId, this).
     function domainSeparator() external view returns (bytes32) {
         return _domainSeparatorV4();
@@ -409,6 +513,23 @@ contract BudgetController is EIP712, ReentrancyGuard {
         try IERC20Permit(address(ausd)).permit(owner, address(this), value, deadline, v, r, s) {} catch {}
     }
 
+    // ─── internal: budgets ──────────────────────────────────────────────────────────────────
+
+    /**
+     * @dev Store a verified config as `cfg.owner`'s active budget in `mode` (shared by both open paths).
+     *      Un-pauses, keeps today's spend counters (re-opening can never reset a daily cap), and
+     *      makes `cfg`'s agents the only active ones.
+     */
+    function _activateBudget(BudgetConfig calldata cfg, BudgetMode mode) internal {
+        Budget storage budget = budgets[cfg.owner];
+        budget.dailyCap = cfg.dailyCap;
+        budget.expiry = cfg.expiry;
+        budget.paused = false;
+        budget.exists = true;
+        budget.mode = mode;
+        _replaceAgents(cfg);
+    }
+
     // ─── internal: agents ───────────────────────────────────────────────────────────────────
 
     /**
@@ -458,6 +579,80 @@ contract BudgetController is EIP712, ReentrancyGuard {
 
         agentList[owner].push(agent);
         emit AgentConfigured(owner, agent, agentCap, sector);
+    }
+
+    // ─── internal: vouchers ─────────────────────────────────────────────────────────────────
+
+    /**
+     * @dev Checks and effects of `redeemVoucher` (rules 1–5), before any token call. Returns today's index.
+     *      Kept separate from the token calls so each function stays small (and within the EVM stack).
+     */
+    function _chargeVoucher(
+        address owner,
+        uint256 value,
+        uint256 validAfter,
+        uint256 validBefore,
+        address[] calldata agentAddrs,
+        uint128[] calldata amounts
+    ) internal returns (uint64 today) {
+        Budget storage budget = budgets[owner];
+        _requireSpendable(budget);
+        today = _currentDayIndex();
+        _requireTodaysVoucherWindow(today, validAfter, validBefore);
+        if (agentAddrs.length != amounts.length) revert LengthMismatch();
+
+        _rollBudgetDay(budget, today);
+        uint256 total = _chargeAgents(owner, today, agentAddrs, amounts);
+        if (total != value) revert VoucherSplitMismatch();
+        _chargeBudget(budget, total);
+    }
+
+    /// @dev Rule: validAfter == dayStart − 1 and validBefore == dayStart + 1 day, for today's dayStart.
+    function _requireTodaysVoucherWindow(uint64 today, uint256 validAfter, uint256 validBefore) internal pure {
+        uint256 dayStart = uint256(today) * SECONDS_PER_DAY;
+        if (validAfter != dayStart - 1 || validBefore != dayStart + SECONDS_PER_DAY) revert VoucherNotForToday();
+    }
+
+    /**
+     * @dev For each (agent, amount): agent must be active; roll its day; require
+     *      agent.spentToday + amount <= agent.dailyCap and record it. Updating storage inside the loop
+     *      means an agent listed twice is charged twice. Returns sum(amounts).
+     */
+    function _chargeAgents(address owner, uint64 today, address[] calldata agentAddrs, uint128[] calldata amounts)
+        internal
+        returns (uint256 total)
+    {
+        for (uint256 i = 0; i < agentAddrs.length; ++i) {
+            Agent storage agentCfg = agents[owner][agentAddrs[i]];
+            if (!agentCfg.active) revert AgentInactive();
+            _rollAgentDay(agentCfg, today);
+
+            uint256 newAgentSpent = uint256(agentCfg.spentToday) + amounts[i];
+            if (newAgentSpent > agentCfg.dailyCap) revert AgentCapExceeded();
+            // Bounded by the uint128 agent cap (checked just above), so the downcast is lossless.
+            // forge-lint: disable-next-line(unsafe-typecast)
+            agentCfg.spentToday = uint128(newAgentSpent);
+            total += amounts[i];
+        }
+    }
+
+    /// @dev Rule: budget.spentToday + amount <= budget.dailyCap (day already rolled); then record it.
+    function _chargeBudget(Budget storage budget, uint256 amount) internal {
+        uint256 newBudgetSpent = uint256(budget.spentToday) + amount;
+        if (newBudgetSpent > budget.dailyCap) revert DailyCapExceeded();
+        // Bounded by the uint128 daily cap (checked just above), so the downcast is lossless.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        budget.spentToday = uint128(newBudgetSpent);
+    }
+
+    /// @dev Send each agent its share of a redeemed voucher; emits `Recharged` per agent, like `recharge`.
+    function _payAgents(address owner, address[] calldata agentAddrs, uint128[] calldata amounts) internal {
+        uint128 budgetSpent = budgets[owner].spentToday;
+        for (uint256 i = 0; i < agentAddrs.length; ++i) {
+            address agent = agentAddrs[i];
+            ausd.safeTransfer(agent, amounts[i]);
+            emit Recharged(owner, agent, amounts[i], budgetSpent, agents[owner][agent].spentToday);
+        }
     }
 
     // ─── internal: days and caps ────────────────────────────────────────────────────────────

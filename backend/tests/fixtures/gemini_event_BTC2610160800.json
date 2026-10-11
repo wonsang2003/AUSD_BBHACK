@@ -1,0 +1,170 @@
+{
+ "id": "btc2610160800",
+ "ticker": "BTC2610160800",
+ "title": "Bitcoin price on Oct 16 at 08:00 UTC",
+ "slug": "btc2610160800",
+ "description": "Resolves on the published reference price at 2026-10-16T08:00:00.000Z.",
+ "category": "crypto",
+ "series": null,
+ "status": "active",
+ "type": "categorical",
+ "expiryDate": "2026-10-16T08:00:00.000Z",
+ "effectiveDate": "2026-10-09T08:00:00.000Z",
+ "volume": "412203",
+ "liquidity": "88120",
+ "tags": [
+  "crypto"
+ ],
+ "contracts": [
+  {
+   "id": "btc2610160800-hi112000",
+   "label": "BTC > $112,000",
+   "abbreviatedName": "BTC > $112,000",
+   "ticker": "BTC2610160800-HI112000",
+   "instrumentSymbol": "GEMI-BTC2610160800-HI112000",
+   "status": "active",
+   "marketState": "open",
+   "expiryDate": "2026-10-16T08:00:00.000Z",
+   "effectiveDate": "2026-10-09T08:00:00.000Z",
+   "strike": {
+    "value": "112000.00",
+    "type": "above"
+   },
+   "prices": {
+    "buy": {
+     "yes": "0.86",
+     "no": "0.16"
+    },
+    "sell": {
+     "yes": "0.84",
+     "no": "0.14"
+    },
+    "bestBid": "0.84",
+    "bestAsk": "0.86",
+    "lastTradePrice": "0.85"
+   },
+   "totalShares": "18250",
+   "sortOrder": 0
+  },
+  {
+   "id": "btc2610160800-hi118000",
+   "label": "BTC > $118,000",
+   "abbreviatedName": "BTC > $118,000",
+   "ticker": "BTC2610160800-HI118000",
+   "instrumentSymbol": "GEMI-BTC2610160800-HI118000",
+   "status": "active",
+   "marketState": "open",
+   "expiryDate": "2026-10-16T08:00:00.000Z",
+   "effectiveDate": "2026-10-09T08:00:00.000Z",
+   "strike": {
+    "value": "118000.00",
+    "type": "above"
+   },
+   "prices": {
+    "buy": {
+     "yes": "0.51",
+     "no": "0.52"
+    },
+    "sell": {
+     "yes": "0.48",
+     "no": "0.49"
+    },
+    "bestBid": "0.48",
+    "bestAsk": "0.51",
+    "lastTradePrice": "0.50"
+   },
+   "totalShares": "18250",
+   "sortOrder": 0
+  },
+  {
+   "id": "btc2610160800-hi124000",
+   "label": "BTC > $124,000",
+   "abbreviatedName": "BTC > $124,000",
+   "ticker": "BTC2610160800-HI124000",
+   "instrumentSymbol": "GEMI-BTC2610160800-HI124000",
+   "status": "active",
+   "marketState": "open",
+   "expiryDate": "2026-10-16T08:00:00.000Z",
+   "effectiveDate": "2026-10-09T08:00:00.000Z",
+   "strike": {
+    "value": "124000.00",
+    "type": "above"
+   },
+   "prices": {
+    "buy": {
+     "yes": "0.15",
+     "no": "0.88"
+    },
+    "sell": {
+     "yes": "0.12",
+     "no": "0.85"
+    },
+    "bestBid": "0.12",
+    "bestAsk": "0.15",
+    "lastTradePrice": "0.13"
+   },
+   "totalShares": "18250",
+   "sortOrder": 0
+  },
+  {
+   "id": "btc2610160800-hi130000",
+   "label": "BTC > $130,000",
+   "abbreviatedName": "BTC > $130,000",
+   "ticker": "BTC2610160800-HI130000",
+   "instrumentSymbol": "GEMI-BTC2610160800-HI130000",
+   "status": "active",
+   "marketState": "open",
+   "expiryDate": "2026-10-16T08:00:00.000Z",
+   "effectiveDate": "2026-10-09T08:00:00.000Z",
+   "strike": {
+    "value": "130000.00",
+    "type": "above"
+   },
+   "prices": {
+    "buy": {
+     "yes": "0.04",
+     "no": null
+    },
+    "sell": {
+     "yes": null,
+     "no": "0.96"
+    },
+    "bestBid": null,
+    "bestAsk": "0.04",
+    "lastTradePrice": "0.03"
+   },
+   "totalShares": "18250",
+   "sortOrder": 0
+  },
+  {
+   "id": "btc2610160800-hi100000",
+   "label": "BTC > $100,000",
+   "abbreviatedName": "BTC > $100,000",
+   "ticker": "BTC2610160800-HI100000",
+   "instrumentSymbol": "GEMI-BTC2610160800-HI100000",
+   "status": "active",
+   "marketState": "closed",
+   "expiryDate": "2026-10-16T08:00:00.000Z",
+   "effectiveDate": "2026-10-09T08:00:00.000Z",
+   "strike": {
+    "value": "100000.00",
+    "type": "above"
+   },
+   "prices": {
+    "buy": {
+     "yes": null,
+     "no": "0.01"
+    },
+    "sell": {
+     "yes": "0.99",
+     "no": null
+    },
+    "bestBid": "0.99",
+    "bestAsk": null,
+    "lastTradePrice": "0.99"
+   },
+   "totalShares": "18250",
+   "sortOrder": 0
+  }
+ ]
+}

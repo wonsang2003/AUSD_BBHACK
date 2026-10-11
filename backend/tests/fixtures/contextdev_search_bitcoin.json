@@ -1,0 +1,24 @@
+{
+ "query": "bitcoin",
+ "request_id": "req_01JQ7Z5K2V8M3T4N6P9R1S2T3U",
+ "results": [
+  {
+   "url": "https://www.reuters.com/markets/crypto/bitcoin-etf-inflows",
+   "title": "Bitcoin ETF inflows top $1 billion as price nears record",
+   "description": "Spot bitcoin ETFs drew more than $1 billion ...",
+   "relevance": 0.93
+  },
+  {
+   "url": "https://www.coindesk.com/markets/2026/10/11/options-traders",
+   "title": "Options traders pile into $130K bitcoin calls",
+   "description": "Deribit open interest in December calls ...",
+   "relevance": 0.88
+  },
+  {
+   "url": "",
+   "title": "Result without URL",
+   "description": "",
+   "relevance": 0.1
+  }
+ ]
+}

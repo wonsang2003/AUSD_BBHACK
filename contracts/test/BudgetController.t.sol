@@ -14,6 +14,8 @@ import {MockAUSD} from "../src/mocks/MockAUSD.sol";
  *         nonces, the ERC-2612 permit flow with 6-decimal AUSD (including a front-run permit), the
  *         "controller never holds funds" invariant, config updates, and EIP-712 digests — both
  *         against the spec's encoding and against digests pinned from backend/app/chain/eip712.py.
+ *         Also the daily-voucher mode (SPEC §9 Update #1 D): openVoucherBudget, redeemVoucher splits,
+ *         wrong-day / replayed / cancelled vouchers, split and cap checks, and voucherNonce.
  *
  * Each test follows Arrange / Act / Assert. Signatures are produced with Foundry's `vm.sign` over
  * digests built here from the spec (not read back from the contract under test).
@@ -54,6 +56,15 @@ contract BudgetControllerTest is Test {
         keccak256("SetPaused(address owner,bool paused,uint256 nonce,uint256 deadline)");
     bytes32 private constant PERMIT_TYPEHASH =
         keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)");
+    bytes32 private constant RECEIVE_WITH_AUTHORIZATION_TYPEHASH = keccak256(
+        "ReceiveWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)"
+    );
+    bytes32 private constant CANCEL_AUTHORIZATION_TYPEHASH =
+        keccak256("CancelAuthorization(address authorizer,bytes32 nonce)");
+
+    /// @dev Salt the owner picks when signing a week of vouchers (any bytes32).
+    bytes32 private constant VOUCHER_SALT = keccak256("test-voucher-salt");
+    uint128 private constant VOUCHER_VALUE = 8 * ONE_AUSD; // fits the 10 AUSD daily cap
 
     // Digests pinned from backend/app/chain/eip712.py (build_budget_config / build_set_paused +
     // typed_data_digest) for chain 84532 and a controller at PINNED_CONTROLLER_ADDRESS.
@@ -63,6 +74,15 @@ contract BudgetControllerTest is Test {
         0x91a32f35a295ddddfa971389377ff5436a640dd3da76cfc49af2654b41b101b6;
     bytes32 private constant PYTHON_SET_PAUSED_DIGEST =
         0x087d37a466a1a7443471bc0477034e1cfd234fd032ab35cd205c4b9c697e50f6;
+
+    /// @dev One signed daily voucher (an ERC-3009 ReceiveWithAuthorization to the controller).
+    struct Voucher {
+        uint256 value;
+        uint256 validAfter;
+        uint256 validBefore;
+        bytes32 nonce;
+        bytes signature;
+    }
 
     /// @dev An ERC-2612 permit signature plus the two values it covers.
     struct PermitSig {
@@ -943,6 +963,378 @@ contract BudgetControllerTest is Test {
         assertEq(digest, PYTHON_SET_PAUSED_DIGEST);
     }
 
+    // ═══ daily vouchers: opening ════════════════════════════════════════════════════════════
+
+    function test_open_voucher_budget_stores_config_in_voucher_mode_without_allowance() public {
+        // Arrange
+        BudgetController.BudgetConfig memory cfg = _defaultConfig();
+
+        // Act
+        _openVoucherBudget(cfg);
+
+        // Assert
+        BudgetController.Budget memory budget = _budget(owner);
+        assertTrue(budget.exists);
+        assertEq(uint8(budget.mode), uint8(BudgetController.BudgetMode.VOUCHER));
+        assertEq(budget.dailyCap, DAILY_CAP);
+        assertEq(budget.cfgNonce, 1);
+        assertEq(token.allowance(owner, address(controller)), 0);
+        assertTrue(_agent(owner, optionsAgent).active);
+        assertEq(controller.getAgents(owner).length, 2);
+    }
+
+    function test_open_voucher_budget_emits_voucher_budget_opened() public {
+        // Arrange
+        BudgetController.BudgetConfig memory cfg = _defaultConfig();
+        bytes memory cfgSig = _ownerConfigSig(cfg);
+
+        // Assert (event declared before the call)
+        vm.expectEmit(address(controller));
+        emit BudgetController.VoucherBudgetOpened(owner, DAILY_CAP, cfg.expiry, 2);
+
+        // Act
+        vm.prank(keeper);
+        controller.openVoucherBudget(cfg, cfgSig);
+    }
+
+    function test_open_voucher_budget_reverts_on_bad_config_signature() public {
+        // Arrange
+        BudgetController.BudgetConfig memory cfg = _defaultConfig();
+        bytes memory strangerSig = _sign(STRANGER_PRIVATE_KEY, _specConfigDigest(cfg));
+
+        // Act + Assert
+        vm.expectRevert(BudgetController.BadSignature.selector);
+        vm.prank(keeper);
+        controller.openVoucherBudget(cfg, strangerSig);
+    }
+
+    function test_open_voucher_budget_reverts_when_caller_is_not_keeper() public {
+        // Arrange
+        BudgetController.BudgetConfig memory cfg = _defaultConfig();
+        bytes memory cfgSig = _ownerConfigSig(cfg);
+
+        // Act + Assert
+        vm.expectRevert(BudgetController.NotKeeper.selector);
+        vm.prank(stranger);
+        controller.openVoucherBudget(cfg, cfgSig);
+    }
+
+    function test_recharge_reverts_for_voucher_mode_budget() public {
+        // Arrange: even with a leftover allowance, a voucher-mode budget never pulls via transferFrom.
+        _openVoucherBudget(_defaultConfig());
+        vm.prank(owner);
+        token.approve(address(controller), PERMIT_VALUE);
+
+        // Act + Assert
+        vm.expectRevert(BudgetController.WrongBudgetMode.selector);
+        _recharge(optionsAgent, 1);
+    }
+
+    function test_open_budget_with_permit_switches_voucher_budget_back_to_permit_mode() public {
+        // Arrange
+        _openVoucherBudget(_defaultConfig());
+
+        // Act
+        _openBudget(_defaultConfig());
+
+        // Assert
+        assertEq(uint8(_budget(owner).mode), uint8(BudgetController.BudgetMode.PERMIT));
+        _recharge(optionsAgent, ONE_AUSD);
+        assertEq(token.balanceOf(optionsAgent), ONE_AUSD);
+    }
+
+    // ═══ daily vouchers: redeeming ══════════════════════════════════════════════════════════
+
+    function test_redeem_voucher_splits_value_across_agents() public {
+        // Arrange: 8 AUSD voucher for today, split 5 (options) + 3 (perps).
+        _openVoucherBudget(_defaultConfig());
+        Voucher memory voucher = _ownerVoucher(_today(), VOUCHER_VALUE);
+        (address[] memory agentAddrs, uint128[] memory amounts) = _split(5 * ONE_AUSD, 3 * ONE_AUSD);
+        uint256 ownerBalanceBefore = token.balanceOf(owner);
+
+        // Act
+        _redeem(voucher, agentAddrs, amounts);
+
+        // Assert
+        assertEq(token.balanceOf(optionsAgent), 5 * ONE_AUSD);
+        assertEq(token.balanceOf(perpsAgent), 3 * ONE_AUSD);
+        assertEq(token.balanceOf(owner), ownerBalanceBefore - VOUCHER_VALUE);
+        assertEq(token.balanceOf(address(controller)), 0);
+        assertEq(_budget(owner).spentToday, VOUCHER_VALUE);
+        assertEq(_agent(owner, optionsAgent).spentToday, 5 * ONE_AUSD);
+        assertEq(controller.remainingToday(owner), DAILY_CAP - VOUCHER_VALUE);
+        assertTrue(token.authorizationState(owner, voucher.nonce));
+    }
+
+    function test_redeem_voucher_emits_voucher_redeemed() public {
+        // Arrange
+        _openVoucherBudget(_defaultConfig());
+        Voucher memory voucher = _ownerVoucher(_today(), VOUCHER_VALUE);
+        (address[] memory agentAddrs, uint128[] memory amounts) = _split(5 * ONE_AUSD, 3 * ONE_AUSD);
+
+        // Assert (event declared before the call)
+        vm.expectEmit(address(controller));
+        emit BudgetController.VoucherRedeemed(owner, _today(), VOUCHER_VALUE);
+
+        // Act
+        _redeem(voucher, agentAddrs, amounts);
+    }
+
+    function test_redeem_voucher_works_with_a_permit_mode_budget_under_shared_caps() public {
+        // Arrange: a 4 AUSD recharge already counts against today's 10 AUSD cap.
+        _openBudget(_defaultConfig());
+        _recharge(optionsAgent, 4 * ONE_AUSD);
+        Voucher memory voucher = _ownerVoucher(_today(), VOUCHER_VALUE);
+        (address[] memory agentAddrs, uint128[] memory amounts) = _split(2 * ONE_AUSD, 6 * ONE_AUSD);
+
+        // Act + Assert: 4 + 8 > 10
+        vm.expectRevert(BudgetController.DailyCapExceeded.selector);
+        _redeem(voucher, agentAddrs, amounts);
+    }
+
+    function test_redeem_voucher_reverts_when_voucher_is_for_another_day() public {
+        // Arrange: tomorrow's voucher presented today.
+        _openVoucherBudget(_defaultConfig());
+        Voucher memory tomorrow = _ownerVoucher(_today() + 1, VOUCHER_VALUE);
+        (address[] memory agentAddrs, uint128[] memory amounts) = _split(5 * ONE_AUSD, 3 * ONE_AUSD);
+
+        // Act + Assert
+        vm.expectRevert(BudgetController.VoucherNotForToday.selector);
+        _redeem(tomorrow, agentAddrs, amounts);
+    }
+
+    function test_redeem_voucher_reverts_after_its_day_has_passed() public {
+        // Arrange: today's voucher, presented tomorrow.
+        _openVoucherBudget(_defaultConfig());
+        Voucher memory voucher = _ownerVoucher(_today(), VOUCHER_VALUE);
+        (address[] memory agentAddrs, uint128[] memory amounts) = _split(5 * ONE_AUSD, 3 * ONE_AUSD);
+        vm.warp(_nextUtcDayStart());
+
+        // Act + Assert
+        vm.expectRevert(BudgetController.VoucherNotForToday.selector);
+        _redeem(voucher, agentAddrs, amounts);
+    }
+
+    function test_redeem_voucher_reverts_when_redeemed_twice() public {
+        // Arrange: 4 AUSD voucher redeemed once (two redemptions would still fit the caps).
+        _openVoucherBudget(_defaultConfig());
+        Voucher memory voucher = _ownerVoucher(_today(), 4 * ONE_AUSD);
+        (address[] memory agentAddrs, uint128[] memory amounts) = _split(2 * ONE_AUSD, 2 * ONE_AUSD);
+        _redeem(voucher, agentAddrs, amounts);
+
+        // Act + Assert: the token refuses the used nonce.
+        vm.expectRevert(MockAUSD.AuthorizationAlreadyUsed.selector);
+        _redeem(voucher, agentAddrs, amounts);
+    }
+
+    function test_redeem_voucher_reverts_when_owner_cancelled_it() public {
+        // Arrange: the owner cancels today's voucher on the token (anyone may submit the cancellation).
+        _openVoucherBudget(_defaultConfig());
+        Voucher memory voucher = _ownerVoucher(_today(), VOUCHER_VALUE);
+        (address[] memory agentAddrs, uint128[] memory amounts) = _split(5 * ONE_AUSD, 3 * ONE_AUSD);
+        _cancelVoucher(voucher.nonce);
+
+        // Act + Assert
+        vm.expectRevert(MockAUSD.AuthorizationAlreadyUsed.selector);
+        _redeem(voucher, agentAddrs, amounts);
+        assertEq(token.balanceOf(optionsAgent), 0);
+    }
+
+    function test_redeem_voucher_reverts_when_amounts_do_not_sum_to_value() public {
+        // Arrange: 5 + 2 = 7 AUSD, but the voucher is for 8.
+        _openVoucherBudget(_defaultConfig());
+        Voucher memory voucher = _ownerVoucher(_today(), VOUCHER_VALUE);
+        (address[] memory agentAddrs, uint128[] memory amounts) = _split(5 * ONE_AUSD, 2 * ONE_AUSD);
+
+        // Act + Assert
+        vm.expectRevert(BudgetController.VoucherSplitMismatch.selector);
+        _redeem(voucher, agentAddrs, amounts);
+    }
+
+    function test_redeem_voucher_reverts_on_length_mismatch() public {
+        // Arrange
+        _openVoucherBudget(_defaultConfig());
+        Voucher memory voucher = _ownerVoucher(_today(), VOUCHER_VALUE);
+        (address[] memory agentAddrs,) = _split(5 * ONE_AUSD, 3 * ONE_AUSD);
+        uint128[] memory oneAmount = new uint128[](1);
+        oneAmount[0] = VOUCHER_VALUE;
+
+        // Act + Assert
+        vm.expectRevert(BudgetController.LengthMismatch.selector);
+        _redeem(voucher, agentAddrs, oneAmount);
+    }
+
+    function test_redeem_voucher_reverts_for_unregistered_agent() public {
+        // Arrange: the news agent is not in the owner's config.
+        _openVoucherBudget(_defaultConfig());
+        Voucher memory voucher = _ownerVoucher(_today(), VOUCHER_VALUE);
+        (address[] memory agentAddrs, uint128[] memory amounts) = _split(5 * ONE_AUSD, 3 * ONE_AUSD);
+        agentAddrs[1] = newsAgent;
+
+        // Act + Assert
+        vm.expectRevert(BudgetController.AgentInactive.selector);
+        _redeem(voucher, agentAddrs, amounts);
+    }
+
+    function test_redeem_voucher_reverts_when_agent_cap_exceeded() public {
+        // Arrange: 7 AUSD to the options agent, whose cap is 6.
+        _openVoucherBudget(_defaultConfig());
+        Voucher memory voucher = _ownerVoucher(_today(), VOUCHER_VALUE);
+        (address[] memory agentAddrs, uint128[] memory amounts) = _split(7 * ONE_AUSD, 1 * ONE_AUSD);
+
+        // Act + Assert
+        vm.expectRevert(BudgetController.AgentCapExceeded.selector);
+        _redeem(voucher, agentAddrs, amounts);
+    }
+
+    function test_redeem_voucher_reverts_when_agent_listed_twice_exceeds_its_cap() public {
+        // Arrange: options agent listed twice, 4 + 4 = 8 > its 6 AUSD cap.
+        _openVoucherBudget(_defaultConfig());
+        Voucher memory voucher = _ownerVoucher(_today(), VOUCHER_VALUE);
+        (address[] memory agentAddrs, uint128[] memory amounts) = _split(4 * ONE_AUSD, 4 * ONE_AUSD);
+        agentAddrs[1] = optionsAgent;
+
+        // Act + Assert
+        vm.expectRevert(BudgetController.AgentCapExceeded.selector);
+        _redeem(voucher, agentAddrs, amounts);
+    }
+
+    function test_redeem_voucher_reverts_when_daily_cap_exceeded() public {
+        // Arrange: 11 AUSD (6 + 5, each within its agent cap) is above the 10 AUSD daily cap.
+        _openVoucherBudget(_defaultConfig());
+        uint256 value = 11 * ONE_AUSD;
+        Voucher memory voucher = _ownerVoucher(_today(), value);
+        (address[] memory agentAddrs, uint128[] memory amounts) = _split(6 * ONE_AUSD, 5 * ONE_AUSD);
+
+        // Act + Assert
+        vm.expectRevert(BudgetController.DailyCapExceeded.selector);
+        _redeem(voucher, agentAddrs, amounts);
+    }
+
+    function test_redeem_voucher_reverts_when_signed_value_differs() public {
+        // Arrange: the keeper claims 9 AUSD for a voucher the owner signed for 8.
+        _openVoucherBudget(_defaultConfig());
+        Voucher memory voucher = _ownerVoucher(_today(), VOUCHER_VALUE);
+        voucher.value = 9 * ONE_AUSD;
+        (address[] memory agentAddrs, uint128[] memory amounts) = _split(5 * ONE_AUSD, 4 * ONE_AUSD);
+
+        // Act + Assert
+        vm.expectRevert(MockAUSD.InvalidSignature.selector);
+        _redeem(voucher, agentAddrs, amounts);
+    }
+
+    function test_redeem_voucher_reverts_when_budget_paused() public {
+        // Arrange
+        _openVoucherBudget(_defaultConfig());
+        vm.prank(owner);
+        controller.setPaused(true);
+        Voucher memory voucher = _ownerVoucher(_today(), VOUCHER_VALUE);
+        (address[] memory agentAddrs, uint128[] memory amounts) = _split(5 * ONE_AUSD, 3 * ONE_AUSD);
+
+        // Act + Assert
+        vm.expectRevert(BudgetController.BudgetPaused.selector);
+        _redeem(voucher, agentAddrs, amounts);
+    }
+
+    function test_redeem_voucher_reverts_when_budget_expired() public {
+        // Arrange
+        BudgetController.BudgetConfig memory cfg = _defaultConfig();
+        _openVoucherBudget(cfg);
+        vm.warp(cfg.expiry);
+        Voucher memory voucher = _ownerVoucher(_today(), VOUCHER_VALUE);
+        (address[] memory agentAddrs, uint128[] memory amounts) = _split(5 * ONE_AUSD, 3 * ONE_AUSD);
+
+        // Act + Assert
+        vm.expectRevert(BudgetController.BudgetExpired.selector);
+        _redeem(voucher, agentAddrs, amounts);
+    }
+
+    function test_redeem_voucher_reverts_without_budget() public {
+        // Arrange
+        Voucher memory voucher = _ownerVoucher(_today(), VOUCHER_VALUE);
+        (address[] memory agentAddrs, uint128[] memory amounts) = _split(5 * ONE_AUSD, 3 * ONE_AUSD);
+
+        // Act + Assert
+        vm.expectRevert(BudgetController.NoBudget.selector);
+        _redeem(voucher, agentAddrs, amounts);
+    }
+
+    function test_redeem_voucher_reverts_when_caller_is_not_keeper() public {
+        // Arrange
+        _openVoucherBudget(_defaultConfig());
+        Voucher memory voucher = _ownerVoucher(_today(), VOUCHER_VALUE);
+        (address[] memory agentAddrs, uint128[] memory amounts) = _split(5 * ONE_AUSD, 3 * ONE_AUSD);
+
+        // Act + Assert
+        vm.expectRevert(BudgetController.NotKeeper.selector);
+        vm.prank(stranger);
+        controller.redeemVoucher(
+            owner,
+            voucher.value,
+            voucher.validAfter,
+            voucher.validBefore,
+            voucher.nonce,
+            voucher.signature,
+            agentAddrs,
+            amounts
+        );
+    }
+
+    function test_vouchers_redeem_on_consecutive_days_with_fresh_caps() public {
+        // Arrange: two days' vouchers, each 8 AUSD (16 AUSD > one daily cap, fine across two days).
+        _openVoucherBudget(_defaultConfig());
+        uint64 firstDay = _today();
+        Voucher memory dayOne = _ownerVoucher(firstDay, VOUCHER_VALUE);
+        Voucher memory dayTwo = _ownerVoucher(firstDay + 1, VOUCHER_VALUE);
+        (address[] memory agentAddrs, uint128[] memory amounts) = _split(5 * ONE_AUSD, 3 * ONE_AUSD);
+
+        // Act
+        _redeem(dayOne, agentAddrs, amounts);
+        vm.warp(_nextUtcDayStart());
+        _redeem(dayTwo, agentAddrs, amounts);
+
+        // Assert
+        assertEq(token.balanceOf(optionsAgent), 10 * ONE_AUSD);
+        assertEq(token.balanceOf(perpsAgent), 6 * ONE_AUSD);
+        assertEq(_budget(owner).dayIndex, firstDay + 1);
+        assertEq(_budget(owner).spentToday, VOUCHER_VALUE);
+        assertEq(token.balanceOf(address(controller)), 0);
+    }
+
+    function testFuzz_redeem_voucher_never_leaves_funds_in_controller(uint128 optionsAmount, uint128 perpsAmount)
+        public
+    {
+        // Arrange
+        optionsAmount = uint128(bound(optionsAmount, 0, OPTIONS_AGENT_CAP));
+        uint128 perpsMax = DAILY_CAP - optionsAmount < PERPS_AGENT_CAP ? DAILY_CAP - optionsAmount : PERPS_AGENT_CAP;
+        perpsAmount = uint128(bound(perpsAmount, 0, perpsMax));
+        uint256 value = uint256(optionsAmount) + perpsAmount;
+        _openVoucherBudget(_defaultConfig());
+        Voucher memory voucher = _ownerVoucher(_today(), value);
+        (address[] memory agentAddrs, uint128[] memory amounts) = _split(optionsAmount, perpsAmount);
+        uint256 ownerBalanceBefore = token.balanceOf(owner);
+
+        // Act
+        _redeem(voucher, agentAddrs, amounts);
+
+        // Assert: value is conserved owner -> agents, nothing stays behind.
+        assertEq(token.balanceOf(address(controller)), 0);
+        assertEq(ownerBalanceBefore - token.balanceOf(owner), value);
+        assertEq(token.balanceOf(optionsAgent) + token.balanceOf(perpsAgent), value);
+    }
+
+    function test_voucher_nonce_matches_spec_encoding() public view {
+        // Arrange
+        uint64 dayIndex = 20_372;
+        bytes32 expected = keccak256(abi.encode(string("pocketdesk-voucher"), owner, uint256(dayIndex), VOUCHER_SALT));
+
+        // Act
+        bytes32 nonce = controller.voucherNonce(owner, dayIndex, VOUCHER_SALT);
+
+        // Assert
+        assertEq(nonce, expected);
+    }
+
     // ─── helpers: configs ───────────────────────────────────────────────────────────────────
 
     /// @dev Owner's default config: options (6 AUSD) + perps (6 AUSD) under a 10 AUSD daily cap, 30 days.
@@ -1091,6 +1483,87 @@ contract BudgetControllerTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
+    // ─── helpers: vouchers ──────────────────────────────────────────────────────────────────
+
+    /// @dev Owner signs the config; the keeper opens the budget in voucher mode.
+    function _openVoucherBudget(BudgetController.BudgetConfig memory cfg) internal {
+        bytes memory cfgSig = _ownerConfigSig(cfg);
+        vm.prank(keeper);
+        controller.openVoucherBudget(cfg, cfgSig);
+    }
+
+    /// @dev Today's UTC day index, as the contract computes it.
+    function _today() internal view returns (uint64) {
+        return uint64(block.timestamp / 1 days);
+    }
+
+    /**
+     * @dev The owner's voucher for UTC day `dayIndex`, built from the spec: a ReceiveWithAuthorization
+     *      to the controller with validAfter = dayStart − 1, validBefore = dayEnd and the deterministic nonce.
+     */
+    function _ownerVoucher(uint64 dayIndex, uint256 value) internal view returns (Voucher memory voucher) {
+        uint256 dayStart = uint256(dayIndex) * 1 days;
+        voucher.value = value;
+        voucher.validAfter = dayStart - 1;
+        voucher.validBefore = dayStart + 1 days;
+        voucher.nonce = keccak256(abi.encode(string("pocketdesk-voucher"), owner, uint256(dayIndex), VOUCHER_SALT));
+        bytes32 structHash = keccak256(
+            abi.encode(
+                RECEIVE_WITH_AUTHORIZATION_TYPEHASH,
+                owner,
+                address(controller),
+                value,
+                voucher.validAfter,
+                voucher.validBefore,
+                voucher.nonce
+            )
+        );
+        voucher.signature = _signOnToken(OWNER_PRIVATE_KEY, structHash);
+    }
+
+    /// @dev Parallel (agents, amounts) arrays: options agent gets `optionsAmount`, perps agent `perpsAmount`.
+    function _split(uint128 optionsAmount, uint128 perpsAmount)
+        internal
+        view
+        returns (address[] memory agentAddrs, uint128[] memory amounts)
+    {
+        agentAddrs = new address[](2);
+        agentAddrs[0] = optionsAgent;
+        agentAddrs[1] = perpsAgent;
+        amounts = new uint128[](2);
+        amounts[0] = optionsAmount;
+        amounts[1] = perpsAmount;
+    }
+
+    /// @dev Keeper redeems `voucher` with the given split.
+    function _redeem(Voucher memory voucher, address[] memory agentAddrs, uint128[] memory amounts) internal {
+        vm.prank(keeper);
+        controller.redeemVoucher(
+            owner,
+            voucher.value,
+            voucher.validAfter,
+            voucher.validBefore,
+            voucher.nonce,
+            voucher.signature,
+            agentAddrs,
+            amounts
+        );
+    }
+
+    /// @dev Owner signs CancelAuthorization for `nonce`; a stranger submits it to the token.
+    function _cancelVoucher(bytes32 nonce) internal {
+        bytes32 structHash = keccak256(abi.encode(CANCEL_AUTHORIZATION_TYPEHASH, owner, nonce));
+        bytes memory signature = _signOnToken(OWNER_PRIVATE_KEY, structHash);
+        vm.prank(stranger);
+        token.cancelAuthorization(owner, nonce, signature);
+    }
+
+    /// @dev 65-byte signature over an EIP-712 struct hash in the token's "Agora Dollar" domain.
+    function _signOnToken(uint256 privateKey, bytes32 structHash) internal view returns (bytes memory) {
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", token.DOMAIN_SEPARATOR(), structHash));
+        return _sign(privateKey, digest);
+    }
+
     // ─── helpers: state readers ─────────────────────────────────────────────────────────────
 
     function _budget(address budgetOwner) internal view returns (BudgetController.Budget memory budget) {
@@ -1101,7 +1574,8 @@ contract BudgetControllerTest is Test {
             budget.expiry,
             budget.paused,
             budget.exists,
-            budget.cfgNonce
+            budget.cfgNonce,
+            budget.mode
         ) = controller.budgets(budgetOwner);
     }
 

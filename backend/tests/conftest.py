@@ -17,15 +17,17 @@ import shutil
 import socket
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
 from eth_account import Account
 from web3 import Web3
 
+from app.chain import eip712
 from app.chain.artifacts import load_artifact
 from app.chain.ausd import AusdClient
+from app.chain.controller import BudgetControllerClient
 from app.chain.web3client import TxSender
 from app.constants import BASE_SEPOLIA_CHAIN_ID, ONE_AUSD
 
@@ -160,5 +162,156 @@ def chain_snapshot(w3, deployer, relayer, settler):
     for sender in (deployer, relayer, settler):
         sender.reset_nonce()
 
+
+
+# ─── BudgetController fixtures ───────────────────────────────────────────────
+
+# The budget `opened_budget` opens: 10 AUSD/day over two agents (6 + 4 AUSD), 30 days.
+BUDGET_DAILY_CAP = 10 * ONE_AUSD
+BUDGET_AGENT_CAPS = (6 * ONE_AUSD, 4 * ONE_AUSD)
+BUDGET_SECTORS = ("OptionsEvent", "OnchainPerps")
+BUDGET_LIFETIME_SECONDS = 30 * 86_400
+BUDGET_PERMIT_VALUE = 50 * ONE_AUSD
+BUDGET_OWNER_FUNDING = 100 * ONE_AUSD
+SIGNATURE_LIFETIME_SECONDS = 3_600
+
+
+class ChainClock:
+    """The anvil chain's clock. Moving it forward is undone by `chain_snapshot`'s revert."""
+
+    def __init__(self, w3: Web3):
+        self.w3 = w3
+
+    def now(self) -> int:
+        """Timestamp of the latest block (the clock the contracts judge expiry / days against)."""
+        return int(self.w3.eth.get_block("latest")["timestamp"])
+
+    def warp_to(self, timestamp: int) -> None:
+        """Mine one block at exactly `timestamp` (must be later than the latest block)."""
+        self.w3.provider.make_request("evm_setNextBlockTimestamp", [int(timestamp)])
+        self.w3.provider.make_request("evm_mine", [])
+
+    def warp_by(self, seconds: int) -> None:
+        """Mine one block `seconds` after the latest block."""
+        self.warp_to(self.now() + int(seconds))
+
+
+@pytest.fixture
+def chain_clock(w3) -> ChainClock:
+    return ChainClock(w3)
+
+
+@pytest.fixture
+def controller(w3, deployer, relayer, mock_ausd, chain_snapshot) -> BudgetControllerClient:
+    """A fresh BudgetController(MockAUSD, keeper = relayer), deployed inside this test's snapshot."""
+    abi, bytecode = load_artifact("BudgetController")
+    address, _ = deployer.deploy(abi, bytecode, mock_ausd.address, relayer.address)
+    return BudgetControllerClient(w3, address, keeper=relayer)
+
+
+class BudgetSigner:
+    """Builds and signs the owner-side messages of the budget flow (what the user's wallet does)."""
+
+    def __init__(self, controller: BudgetControllerClient, token: AusdClient):
+        self.controller = controller
+        self.token = token
+
+    def config(
+        self,
+        owner: str,
+        *,
+        daily_cap: int,
+        expiry: int,
+        agents: list[str],
+        agent_caps: list[int],
+        sectors: list[str],
+        nonce: int | None = None,
+    ) -> eip712.BudgetConfig:
+        """A BudgetConfig with the owner's current on-chain nonce (unless `nonce` is given)."""
+        return eip712.BudgetConfig(
+            owner=owner,
+            daily_cap=daily_cap,
+            expiry=expiry,
+            agent_addrs=list(agents),
+            agent_caps=list(agent_caps),
+            sectors=[eip712.sector_to_bytes32(sector) for sector in sectors],
+            nonce=self.controller.cfg_nonce(owner) if nonce is None else nonce,
+        )
+
+    def sign_config(self, private_key: str, config: eip712.BudgetConfig) -> str:
+        typed = eip712.build_budget_config(
+            chain_id=BASE_SEPOLIA_CHAIN_ID, controller_address=self.controller.address, config=config
+        )
+        return eip712.sign_typed_data(private_key, typed).hex
+
+    def sign_permit(self, private_key: str, value: int, deadline: int) -> eip712.Signature:
+        """ERC-2612 permit for the controller, signed with the owner's current token nonce."""
+        owner = Account.from_key(private_key).address
+        typed = eip712.build_permit(
+            chain_id=BASE_SEPOLIA_CHAIN_ID,
+            ausd_address=self.token.address,
+            owner=owner,
+            spender=self.controller.address,
+            value=value,
+            nonce=self.token.nonces(owner),
+            deadline=deadline,
+        )
+        return eip712.sign_typed_data(private_key, typed)
+
+    def sign_set_paused(self, private_key: str, paused: bool, deadline: int) -> str:
+        owner = Account.from_key(private_key).address
+        typed = eip712.build_set_paused(
+            chain_id=BASE_SEPOLIA_CHAIN_ID,
+            controller_address=self.controller.address,
+            owner=owner,
+            paused=paused,
+            nonce=self.controller.cfg_nonce(owner),
+            deadline=deadline,
+        )
+        return eip712.sign_typed_data(private_key, typed).hex
+
+
+@pytest.fixture
+def budget_signer(controller, mock_ausd) -> BudgetSigner:
+    return BudgetSigner(controller, mock_ausd)
+
+
+@dataclass(frozen=True)
+class OpenedBudget:
+    """A budget opened through the real permit + BudgetConfig signature flow."""
+
+    owner: str
+    owner_key: str = field(repr=False)  # anvil dev key; kept out of repr so it never lands in test output
+    agents: list[str] = field(default_factory=list)
+    agent_caps: list[int] = field(default_factory=list)
+    sectors: list[str] = field(default_factory=list)
+    daily_cap: int = BUDGET_DAILY_CAP
+    expiry: int = 0
+    permit_value: int = BUDGET_PERMIT_VALUE
+
+
+@pytest.fixture
+def opened_budget(controller, budget_signer, fund_ausd, wallets, chain_clock) -> OpenedBudget:
+    """The user funds 100 AUSD, signs a 50 AUSD permit + a 10 AUSD/day config; the relayer opens it."""
+    owner_key = wallets.user
+    owner = Account.from_key(owner_key).address
+    agents = [wallets.address("agent"), wallets.address("agent2")]
+    fund_ausd(owner, BUDGET_OWNER_FUNDING)
+
+    now = chain_clock.now()
+    expiry = now + BUDGET_LIFETIME_SECONDS
+    config = budget_signer.config(
+        owner, daily_cap=BUDGET_DAILY_CAP, expiry=expiry, agents=agents,
+        agent_caps=list(BUDGET_AGENT_CAPS), sectors=list(BUDGET_SECTORS),
+    )
+    permit_deadline = now + SIGNATURE_LIFETIME_SECONDS
+    permit_sig = budget_signer.sign_permit(owner_key, BUDGET_PERMIT_VALUE, permit_deadline)
+    config_sig = budget_signer.sign_config(owner_key, config)
+
+    controller.open_budget(owner, BUDGET_PERMIT_VALUE, permit_deadline, permit_sig, config, config_sig)
+    return OpenedBudget(
+        owner=owner, owner_key=owner_key, agents=agents, agent_caps=list(BUDGET_AGENT_CAPS),
+        sectors=list(BUDGET_SECTORS), daily_cap=BUDGET_DAILY_CAP, expiry=expiry, permit_value=BUDGET_PERMIT_VALUE,
+    )
 
 os.environ.setdefault("SKIP_CHAIN_CHECKS", "true")

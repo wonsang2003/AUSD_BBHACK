@@ -1,0 +1,157 @@
+{
+ "data": [
+  {
+   "id": "fedoct26",
+   "ticker": "FEDOCT26",
+   "title": "Fed decision in October 2026",
+   "slug": "fedoct26",
+   "description": "Resolves on the published reference price at 2026-10-28T18:00:00.000Z.",
+   "category": "economics",
+   "series": null,
+   "status": "active",
+   "type": "categorical",
+   "expiryDate": "2026-10-28T18:00:00.000Z",
+   "effectiveDate": "2026-10-09T08:00:00.000Z",
+   "volume": "412203",
+   "liquidity": "88120",
+   "tags": [
+    "economics"
+   ],
+   "contracts": [
+    {
+     "id": "fedoct26-cut25",
+     "label": "Cut 25 bps",
+     "abbreviatedName": "Cut 25 bps",
+     "ticker": "FEDOCT26-CUT25",
+     "instrumentSymbol": "GEMI-FEDOCT26-CUT25",
+     "status": "active",
+     "marketState": "open",
+     "expiryDate": "2026-10-28T18:00:00.000Z",
+     "effectiveDate": "2026-10-09T08:00:00.000Z",
+     "strike": null,
+     "prices": {
+      "buy": {
+       "yes": "0.65",
+       "no": "0.38"
+      },
+      "sell": {
+       "yes": "0.62",
+       "no": "0.35"
+      },
+      "bestBid": "0.62",
+      "bestAsk": "0.65",
+      "lastTradePrice": "0.63"
+     },
+     "totalShares": "18250",
+     "sortOrder": 0
+    },
+    {
+     "id": "fedoct26-hold",
+     "label": "No change",
+     "abbreviatedName": "No change",
+     "ticker": "FEDOCT26-HOLD",
+     "instrumentSymbol": "GEMI-FEDOCT26-HOLD",
+     "status": "active",
+     "marketState": "open",
+     "expiryDate": "2026-10-28T18:00:00.000Z",
+     "effectiveDate": "2026-10-09T08:00:00.000Z",
+     "strike": null,
+     "prices": {
+      "buy": {
+       "yes": "0.36",
+       "no": "0.67"
+      },
+      "sell": {
+       "yes": "0.33",
+       "no": "0.64"
+      },
+      "bestBid": "0.33",
+      "bestAsk": "0.36",
+      "lastTradePrice": "0.35"
+     },
+     "totalShares": "18250",
+     "sortOrder": 0
+    },
+    {
+     "id": "fedoct26-hike",
+     "label": "Hike",
+     "abbreviatedName": "Hike",
+     "ticker": "FEDOCT26-HIKE",
+     "instrumentSymbol": "GEMI-FEDOCT26-HIKE",
+     "status": "active",
+     "marketState": "open",
+     "expiryDate": "2026-10-28T18:00:00.000Z",
+     "effectiveDate": "2026-10-09T08:00:00.000Z",
+     "strike": null,
+     "prices": {
+      "buy": {
+       "yes": null,
+       "no": null
+      },
+      "sell": {
+       "yes": null,
+       "no": null
+      },
+      "bestBid": null,
+      "bestAsk": null,
+      "lastTradePrice": null
+     },
+     "totalShares": "18250",
+     "sortOrder": 0
+    }
+   ]
+  },
+  {
+   "id": "cpisep26",
+   "ticker": "CPISEP26",
+   "title": "September 2026 CPI year over year",
+   "slug": "cpisep26",
+   "description": "Resolves on the published reference price at 2026-10-14T12:30:00.000Z.",
+   "category": "economics",
+   "series": null,
+   "status": "active",
+   "type": "categorical",
+   "expiryDate": "2026-10-14T12:30:00.000Z",
+   "effectiveDate": "2026-10-09T08:00:00.000Z",
+   "volume": "412203",
+   "liquidity": "88120",
+   "tags": [
+    "economics"
+   ],
+   "contracts": [
+    {
+     "id": "cpisep26-above3d0",
+     "label": "Above 3.0%",
+     "abbreviatedName": "Above 3.0%",
+     "ticker": "CPISEP26-ABOVE3D0",
+     "instrumentSymbol": "GEMI-CPISEP26-ABOVE3D0",
+     "status": "active",
+     "marketState": "open",
+     "expiryDate": "2026-10-14T12:30:00.000Z",
+     "effectiveDate": "2026-10-09T08:00:00.000Z",
+     "strike": null,
+     "prices": {
+      "buy": {
+       "yes": "0.45",
+       "no": "0.59"
+      },
+      "sell": {
+       "yes": "0.41",
+       "no": "0.55"
+      },
+      "bestBid": "0.41",
+      "bestAsk": "0.45",
+      "lastTradePrice": "0.43"
+     },
+     "totalShares": "18250",
+     "sortOrder": 0
+    }
+   ]
+  }
+ ],
+ "pagination": {
+  "limit": 200,
+  "offset": 0,
+  "total": 2
+ }
+}

@@ -32,23 +32,29 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import asdict, dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from app.config import get_settings
 from app.data import fred, gemini
 from app.data.fred import FredError, Observation
 from app.data.http import UpstreamError
-from app.sellers.expected_move import require_payout_address
+from app.sellers.expected_move import (
+    ERROR_UPSTREAM,
+    error_response,
+    iso_utc,
+    require_payout_address,
+    utc_now,
+)
 from app.x402.offer import SellerOffer
 
 # ─── offer ───────────────────────────────────────────────────────────────────
 
 SELLER_ID = "macro_pulse"
-SELLER_PATH = "/sell/macro-pulse"
+OFFER_PATH = "/sell/macro-pulse"
 PRICE_ATOMIC = 20_000  # 0.02 AUSD (6 decimals)
 PAYOUT_SETTING_NAME = "SELLER_PAYTO_MACRO"   # .env variable holding this seller's payout address
-DESCRIPTION = (
+OFFER_DESCRIPTION = (
     "Macro pulse (demo vendor): FRED CPI YoY, fed funds, 2s10s slope, unemployment "
     "+ next FOMC/CPI dates and Gemini economics odds"
 )
@@ -89,8 +95,8 @@ def make_offer() -> SellerOffer:
     Raises SellerConfigError if that address is empty or invalid."""
     return SellerOffer(
         seller_id=SELLER_ID,
-        path=SELLER_PATH,
-        description=DESCRIPTION,
+        path=OFFER_PATH,
+        description=OFFER_DESCRIPTION,
         price_atomic=PRICE_ATOMIC,
         pay_to=require_payout_address(get_settings().seller_payto_macro, PAYOUT_SETTING_NAME),
     )
@@ -358,7 +364,7 @@ def _series_inputs(series: dict[str, list[Observation]]) -> dict:
 
 def build_response(
     series: dict[str, list[Observation]],
-    calendar: MacroCalendar,
+    calendar: MacroCalendar | None,
     prediction_markets: list[dict],
     errors: dict[str, str],
     now: datetime,
@@ -377,7 +383,7 @@ def build_response(
         "curve": asdict(curve) if curve else None,
         "cpi_yoy_change_pts": cpi.yoy_change_pts if cpi else None,
         "fed_funds_change_pts": fed_funds.change_pts if fed_funds else None,
-        "next_releases": next_releases_json(calendar, now.date()),
+        "next_releases": next_releases_json(calendar, now.date()) if calendar else {"fomc": None, "cpi": None},
         "prediction_markets": prediction_markets,
         "method": (
             "CPI YoY = CPI_m / CPI_(m−12) − 1; cpi_yoy_change_pts = YoY_m − YoY_(m−1); fed funds and "
@@ -387,13 +393,13 @@ def build_response(
         "inputs_used": {
             "source": "FRED fredgraph.csv (no key)",
             "series": _series_inputs(series),
-            "calendar_source": calendar.source,
-            "calendar_verified_on": calendar.verified_on,
+            "calendar_source": calendar.source if calendar else None,
+            "calendar_verified_on": calendar.verified_on if calendar else None,
             "prediction_market_category": GEMINI_ECONOMICS_CATEGORY,
             "errors": errors,
         },
-        "computed_at": now.isoformat(timespec="seconds"),
-        "confidence": confidence_for(loaded),
+        "computed_at": iso_utc(now),
+        "confidence": round(confidence_for(loaded), 2),
         "data_delay": DATA_DELAY,
     }
 
@@ -438,15 +444,32 @@ async def fetch_prediction_markets(errors: dict[str, str]) -> list[dict]:
         return []
 
 
+def load_calendar_or_none(errors: dict[str, str], path: Path = MACRO_CALENDAR_PATH) -> MacroCalendar | None:
+    """The static calendar, or None (with the reason under errors["macro_calendar"]) if it cannot be read."""
+    try:
+        return load_macro_calendar(path)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        errors["macro_calendar"] = f"{type(exc).__name__}: {exc}"
+        return None
+
+
 async def compute(params: dict) -> dict:
+    """Answer one paid request now (the x402 server calls this); see `compute_at`."""
+    return await compute_at(params, utc_now())
+
+
+async def compute_at(params: dict, now: datetime) -> dict:
     """
     Fetch FRED + Gemini odds, read the static calendar, and build the macro read.
     `params` is accepted for the common seller signature; this seller takes none.
-    Raises UpstreamError only when every FRED series failed.
+
+    Never raises for upstream failure: only when every FRED series failed does it return
+    {"error", "error_kind", ...} with confidence 0 (the buyer is not charged).
     """
-    now = datetime.now(timezone.utc)
     series, errors = await fetch_all_series(now.date())
     if not any(series.values()):
-        raise UpstreamError(fred.SOURCE_NAME, f"no FRED series could be loaded: {errors}")
+        message = f"no FRED series could be loaded: {errors}"
+        return error_response(params, message, ERROR_UPSTREAM, now, DATA_DELAY)
     prediction_markets = await fetch_prediction_markets(errors)
-    return build_response(series, load_macro_calendar(), prediction_markets, errors, now)
+    calendar = load_calendar_or_none(errors)
+    return build_response(series, calendar, prediction_markets, errors, now)

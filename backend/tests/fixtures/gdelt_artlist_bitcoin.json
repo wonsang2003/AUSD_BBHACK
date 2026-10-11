@@ -1,0 +1,134 @@
+{
+ "articles": [
+  {
+   "url": "https://www.reuters.com/markets/001",
+   "url_mobile": "",
+   "title": "Bitcoin ETF inflows top $1 billion as price nears record",
+   "seendate": "20261011T131500Z",
+   "socialimage": "",
+   "domain": "reuters.com",
+   "language": "English",
+   "sourcecountry": "United States"
+  },
+  {
+   "url": "https://www.coindesk.com/markets/002",
+   "url_mobile": "",
+   "title": "SEC delays decision on new spot bitcoin ETF options rule",
+   "seendate": "20261011T124500Z",
+   "socialimage": "",
+   "domain": "coindesk.com",
+   "language": "English",
+   "sourcecountry": "United States"
+  },
+  {
+   "url": "https://www.theblock.co/markets/003",
+   "url_mobile": "",
+   "title": "Crypto exchange halts withdrawals after $40 million hack",
+   "seendate": "20261011T113000Z",
+   "socialimage": "",
+   "domain": "theblock.co",
+   "language": "English",
+   "sourcecountry": "United States"
+  },
+  {
+   "url": "https://www.cnbc.com/markets/004",
+   "url_mobile": "",
+   "title": "Bitcoin miners rally as hashprice recovers",
+   "seendate": "20261011T104500Z",
+   "socialimage": "",
+   "domain": "cnbc.com",
+   "language": "English",
+   "sourcecountry": "United States"
+  },
+  {
+   "url": "https://www.barrons.com/markets/005",
+   "url_mobile": "",
+   "title": "Analysts upgrade Coinbase on bitcoin trading volumes",
+   "seendate": "20261011T091500Z",
+   "socialimage": "",
+   "domain": "barrons.com",
+   "language": "English",
+   "sourcecountry": "United States"
+  },
+  {
+   "url": "https://www.finance.yahoo.com/markets/006",
+   "url_mobile": "",
+   "title": "bitcoin ETF inflows top $1 billion as price nears record",
+   "seendate": "20261011T090000Z",
+   "socialimage": "",
+   "domain": "finance.yahoo.com",
+   "language": "English",
+   "sourcecountry": "United States"
+  },
+  {
+   "url": "https://www.decrypt.co/markets/007",
+   "url_mobile": "",
+   "title": "Exchange announces delisting of three privacy tokens; bitcoin pairs unaffected",
+   "seendate": "20261011T060000Z",
+   "socialimage": "",
+   "domain": "decrypt.co",
+   "language": "English",
+   "sourcecountry": "United States"
+  },
+  {
+   "url": "https://www.bloomberg.com/markets/008",
+   "url_mobile": "",
+   "title": "Bitcoin slips overnight as dollar firms",
+   "seendate": "20261011T031500Z",
+   "socialimage": "",
+   "domain": "bloomberg.com",
+   "language": "English",
+   "sourcecountry": "United States"
+  },
+  {
+   "url": "https://www.law360.com/markets/009",
+   "url_mobile": "",
+   "title": "Lawsuit claims bitcoin lender misled depositors",
+   "seendate": "20261010T221500Z",
+   "socialimage": "",
+   "domain": "law360.com",
+   "language": "English",
+   "sourcecountry": "United States"
+  },
+  {
+   "url": "https://www.nikkei.com/markets/010",
+   "url_mobile": "",
+   "title": "What the latest bitcoin listing on a Japanese exchange means",
+   "seendate": "20261010T190000Z",
+   "socialimage": "",
+   "domain": "nikkei.com",
+   "language": "English",
+   "sourcecountry": "United States"
+  },
+  {
+   "url": "https://www.wsj.com/markets/011",
+   "url_mobile": "",
+   "title": "Bitcoin treasury company files for chapter 11",
+   "seendate": "20261010T170000Z",
+   "socialimage": "",
+   "domain": "wsj.com",
+   "language": "English",
+   "sourcecountry": "United States"
+  },
+  {
+   "url": "https://www.ft.com/markets/012",
+   "url_mobile": "",
+   "title": "Bitcoin price steady ahead of US inflation data",
+   "seendate": "20261010T150000Z",
+   "socialimage": "",
+   "domain": "ft.com",
+   "language": "English",
+   "sourcecountry": "United States"
+  },
+  {
+   "url": "https://example.org/x",
+   "url_mobile": "",
+   "title": "",
+   "seendate": "20261011T100000Z",
+   "socialimage": "",
+   "domain": "example.org",
+   "language": "English",
+   "sourcecountry": "United States"
+  }
+ ]
+}
