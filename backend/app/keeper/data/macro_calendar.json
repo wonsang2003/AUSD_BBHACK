@@ -1,0 +1,34 @@
+{
+  "description": "Official 2026 US macro release schedule used by macro_pulse (next scheduled release) and the keeper event calendar (agent weighting). FOMC dates are two-day meetings; the policy decision is announced on decision_date. CPI release_time_et is from the BLS schedule table.",
+  "timezone": "America/New_York",
+  "verified_on": "2026-10-11",
+  "verify_note": "Copied from the two official pages below on 2026-10-11. The Fed and BLS can change dates (e.g. after a government shutdown); re-check both pages before relying on a date for anything time-sensitive.",
+  "sources": {
+    "fomc": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+    "cpi": "https://www.bls.gov/schedule/news_release/cpi.htm"
+  },
+  "fomc": [
+    {"start_date": "2026-01-27", "decision_date": "2026-01-28", "has_sep": false},
+    {"start_date": "2026-03-17", "decision_date": "2026-03-18", "has_sep": true},
+    {"start_date": "2026-04-28", "decision_date": "2026-04-29", "has_sep": false},
+    {"start_date": "2026-06-16", "decision_date": "2026-06-17", "has_sep": true},
+    {"start_date": "2026-07-28", "decision_date": "2026-07-29", "has_sep": false},
+    {"start_date": "2026-09-15", "decision_date": "2026-09-16", "has_sep": true},
+    {"start_date": "2026-10-27", "decision_date": "2026-10-28", "has_sep": false},
+    {"start_date": "2026-12-08", "decision_date": "2026-12-09", "has_sep": true}
+  ],
+  "cpi": [
+    {"reference_month": "2025-12", "release_date": "2026-01-13", "release_time_et": "08:30"},
+    {"reference_month": "2026-01", "release_date": "2026-02-13", "release_time_et": "08:30"},
+    {"reference_month": "2026-02", "release_date": "2026-03-11", "release_time_et": "08:30"},
+    {"reference_month": "2026-03", "release_date": "2026-04-10", "release_time_et": "08:30"},
+    {"reference_month": "2026-04", "release_date": "2026-05-12", "release_time_et": "08:30"},
+    {"reference_month": "2026-05", "release_date": "2026-06-10", "release_time_et": "08:30"},
+    {"reference_month": "2026-06", "release_date": "2026-07-14", "release_time_et": "08:30"},
+    {"reference_month": "2026-07", "release_date": "2026-08-12", "release_time_et": "08:30"},
+    {"reference_month": "2026-08", "release_date": "2026-09-11", "release_time_et": "08:30"},
+    {"reference_month": "2026-09", "release_date": "2026-10-14", "release_time_et": "08:30"},
+    {"reference_month": "2026-10", "release_date": "2026-11-10", "release_time_et": "08:30"},
+    {"reference_month": "2026-11", "release_date": "2026-12-10", "release_time_et": "08:30"}
+  ]
+}
