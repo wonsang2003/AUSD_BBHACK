@@ -6,6 +6,8 @@
 
 "use client";
 
+import { LiveUpdatePopup } from "../live/LiveUpdatePopup";
+
 import { FunctionTabs } from "./FunctionTabs";
 import { TickerTape } from "./TickerTape";
 import { TopBar } from "./TopBar";
@@ -16,6 +18,7 @@ export function TerminalChrome() {
       <TopBar />
       <FunctionTabs />
       <TickerTape />
+      <LiveUpdatePopup />
     </header>
   );
 }

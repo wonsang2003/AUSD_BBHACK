@@ -41,6 +41,7 @@ from app.api import (
     faucet,
     feeds,
     health,
+    market_history,
     session,
     state,
     stream,
@@ -83,6 +84,7 @@ API_ROUTERS = (
     faucet.router,
     breaker.router,
     demo.router,
+    market_history.router,
 )
 X402_HEADERS = [HEADER_PAYMENT_REQUIRED, HEADER_PAYMENT_RESPONSE, HEADER_PAYMENT_SIGNATURE]
 

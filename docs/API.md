@@ -97,3 +97,9 @@ Session preconditions (`POST /api/session/start`): 409 with a sentence the dashb
 `"No budget yet — fund one on F2 FUND (or click DEMO FUND)"`, `"Budget is paused — …"`, `"Budget has expired — …"`.
 `POST /api/session/stop` without an owner answers the same "No budget yet" 409.
 Any unexpected error inside an API handler answers 500 `{detail: "<ErrorType>: <message>"}` (still with CORS headers).
+
+## Market history (LIVE UPDATE popup sparkline)
+
+| Method/path | Returns |
+|---|---|
+| `GET /api/market/history?symbol=BTC&minutes=240` | `{symbol, source, delayed: bool, points: [{t: unix_seconds, p: price}], error?}` — crypto: Hyperliquid `candleSnapshot` 5m closes, fallback CoinGecko `market_chart` (days=1); equities: yfinance 1d/5m (`delayed: true`). Cached 60 s. Always HTTP 200: when every source fails, `points: []` plus an `error` string. `minutes` 5–1440 (default 240) |
