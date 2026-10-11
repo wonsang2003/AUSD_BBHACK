@@ -159,6 +159,9 @@ def chain_snapshot(w3, deployer, relayer, settler):
     snapshot_id = w3.provider.make_request("evm_snapshot", [])["result"]
     yield
     w3.provider.make_request("evm_revert", [snapshot_id])
+    # Some tests fast-forward the chain clock (expiry, next-day vouchers). evm_revert restores state but
+    # not anvil's time offset, so re-align the chain clock with wall time for the next test.
+    w3.provider.make_request("evm_setTime", [int(time.time())])
     for sender in (deployer, relayer, settler):
         sender.reset_nonce()
 

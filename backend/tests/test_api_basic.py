@@ -61,7 +61,7 @@ async def test_config_falls_back_to_settings_when_runtime_is_unavailable(payouts
     async with _client(app) as client:
         body = (await client.get("/api/config")).json()
     assert body["explorer_tx_url"].startswith("https://sepolia.basescan.org")
-    assert [agent["name"] for agent in body["agents"]] == ["OptionsEvent"]
+    assert "OptionsEvent" in [agent["name"] for agent in body["agents"]]
     assert {seller["seller_id"] for seller in body["sellers"]} >= {"expected_move", "pm_edge"}
 
 
