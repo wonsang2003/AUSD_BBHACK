@@ -33,7 +33,7 @@ MIN_INTERVAL_SECONDS: dict[str, float] = {
     "deribit": 0.1,
     "gemini": 0.5,       # public API ~120 req/min
     "hyperliquid": 0.2,
-    "gdelt": 1.0,
+    "gdelt": 5.5,         # GDELT asks for at most one request every 5 seconds
     "fred": 0.5,
     "edgar": 0.12,       # SEC asks for <= 10 req/s
     "coingecko": 2.0,
