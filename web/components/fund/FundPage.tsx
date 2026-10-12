@@ -36,7 +36,7 @@ import {
   voucherDailyValues,
   type BudgetFormValues,
   type FundingMode,
-} from "./budgetForm";
+} from "./budgetFormModel";
 import { openPermitBudget, openVoucherBudget } from "./flows";
 import { FlowStatus } from "./FlowStatus";
 import { TopUpQr } from "./TopUpQr";

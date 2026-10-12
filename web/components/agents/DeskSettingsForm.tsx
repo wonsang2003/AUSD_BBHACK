@@ -6,7 +6,7 @@
  */
 
 import { Field, TextInput } from "@/components/fund/Field";
-import { parseWatchlist } from "@/components/fund/budgetForm";
+import { parseWatchlist } from "@/components/fund/budgetFormModel";
 
 import { stakeFor, type AgentSettingsValues } from "./agentSettings";
 

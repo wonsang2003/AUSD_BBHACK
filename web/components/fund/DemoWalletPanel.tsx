@@ -20,7 +20,7 @@ import { shortHex } from "@/components/terminal/format";
 import { demoFund, demoStatus } from "@/lib/api";
 import type { DemoFundRequest } from "@/lib/types";
 
-import { parseBudgetForm, type BudgetFormValues } from "./budgetForm";
+import { parseBudgetForm, type BudgetFormValues } from "./budgetFormModel";
 
 type DemoMode = "permit" | "voucher";
 

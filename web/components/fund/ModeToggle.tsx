@@ -9,7 +9,7 @@
 
 import { cx } from "@/lib/ui";
 
-import type { FundingMode } from "./budgetForm";
+import type { FundingMode } from "./budgetFormModel";
 
 const OPTIONS: Array<{ mode: FundingMode; title: string; detail: string }> = [
   { mode: "permit", title: "Flexible", detail: "1 permit · revocable allowance · 2 signatures" },

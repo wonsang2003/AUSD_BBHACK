@@ -14,7 +14,7 @@ import { useState } from "react";
 import { BASE_SEPOLIA_CHAIN_ID } from "@/lib/constants";
 import { shortAddress } from "@/lib/format";
 
-import { ausdToAtomic } from "./budgetForm";
+import { ausdToAtomic } from "./budgetFormModel";
 
 const QR_SIZE_PX = 132;
 

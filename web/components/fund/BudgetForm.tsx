@@ -11,7 +11,7 @@
 
 import { Button } from "@/components/ui/Button";
 
-import type { BudgetFormValues, FundingMode } from "./budgetForm";
+import type { BudgetFormValues, FundingMode } from "./budgetFormModel";
 import { Field, TextInput } from "./Field";
 import { ModeToggle } from "./ModeToggle";
 

@@ -1,10 +1,10 @@
 /**
  * The /agents form model: per-agent caps, stake per asset, watchlist and session hours, as the
  * user types them, plus the conversion to and from `Settings` (`GET/POST /api/settings`).
- * AUSD amounts are converted exactly with `ausdToAtomic` / `atomicToInput` (`fund/budgetForm.ts`).
+ * AUSD amounts are converted exactly with `ausdToAtomic` / `atomicToInput` (`fund/budgetFormModel.ts`).
  */
 
-import { atomicToInput, ausdToAtomic, DEFAULT_WATCHLIST, parseWatchlist } from "@/components/fund/budgetForm";
+import { atomicToInput, ausdToAtomic, DEFAULT_WATCHLIST, parseWatchlist } from "@/components/fund/budgetFormModel";
 import type { Settings } from "@/lib/types";
 
 const DEFAULT_STAKE_USD = "1000";
