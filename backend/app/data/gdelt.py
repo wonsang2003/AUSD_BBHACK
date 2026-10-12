@@ -116,8 +116,11 @@ def decode_gdelt_body(text: str) -> dict:
 
 
 def parse_seendate(value: str) -> datetime:
-    """Parse GDELT's compact UTC timestamp `YYYYMMDDTHHMMSSZ`."""
-    return datetime.strptime(value, SEENDATE_FORMAT).replace(tzinfo=timezone.utc)
+    """Parse GDELT's compact UTC timestamp `YYYYMMDDTHHMMSSZ`; anything else raises GdeltError."""
+    try:
+        return datetime.strptime(str(value), SEENDATE_FORMAT).replace(tzinfo=timezone.utc)
+    except ValueError as exc:
+        raise GdeltError(f"unexpected GDELT timestamp {value!r}") from exc
 
 
 def parse_artlist(payload: dict) -> list[Article]:
@@ -149,10 +152,13 @@ def parse_timeline_tone(payload: dict) -> list[TonePoint]:
     timeline = payload.get("timeline", [])
     if not timeline:
         return []
-    points = [
-        TonePoint(at=parse_seendate(item["date"]), tone=float(item["value"]))
-        for item in timeline[0].get("data", [])
-    ]
+    try:
+        points = [
+            TonePoint(at=parse_seendate(item["date"]), tone=float(item["value"]))
+            for item in timeline[0].get("data", [])
+        ]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise GdeltError(f"timelinetone bucket not in the documented shape: {exc!r}") from exc
     return sorted(points, key=lambda point: point.at)
 
 

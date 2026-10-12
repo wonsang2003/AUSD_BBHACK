@@ -43,20 +43,30 @@ import re
 import statistics
 from collections import deque
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 
 from app.config import get_settings
-from app.data.hyperliquid import PerpContext, fetch_perp_contexts, index_by_symbol
-from app.sellers.expected_move import require_payout_address
+from app.data import hyperliquid
+from app.data.http import UpstreamError
+from app.data.hyperliquid import HyperliquidParseError, PerpContext, index_by_symbol
+from app.sellers.expected_move import (
+    ERROR_BAD_REQUEST,
+    ERROR_NO_DATA,
+    ERROR_UPSTREAM,
+    error_response,
+    iso_utc,
+    require_payout_address,
+    utc_now,
+)
 from app.x402.offer import SellerOffer
 
 # ─── offer ───────────────────────────────────────────────────────────────────
 
 SELLER_ID = "perps_crowding"
-SELLER_PATH = "/sell/perps-crowding"
+OFFER_PATH = "/sell/perps-crowding"
 PRICE_ATOMIC = 20_000  # 0.02 AUSD (6 decimals)
 PAYOUT_SETTING_NAME = "SELLER_PAYTO_PERPS"   # .env variable holding this seller's payout address
-DESCRIPTION = "Perps crowding (demo vendor): Hyperliquid funding + open-interest z-scores → crowded long/short/neutral"
+OFFER_DESCRIPTION = "Perps crowding (demo vendor): Hyperliquid funding + open-interest z-scores → crowded long/short/neutral"
 
 # ─── parameters ──────────────────────────────────────────────────────────────
 
@@ -100,8 +110,8 @@ def make_offer() -> SellerOffer:
     Raises SellerConfigError if that address is empty or invalid."""
     return SellerOffer(
         seller_id=SELLER_ID,
-        path=SELLER_PATH,
-        description=DESCRIPTION,
+        path=OFFER_PATH,
+        description=OFFER_DESCRIPTION,
         price_atomic=PRICE_ATOMIC,
         pay_to=require_payout_address(get_settings().seller_payto_perps, PAYOUT_SETTING_NAME),
     )
@@ -438,27 +448,38 @@ def build_response(
             "cross_section_size": cross_section_size,
             "snapshots_per_asset": {row.asset: row.snapshots_used for row in rows},
         },
-        "computed_at": now.isoformat(timespec="seconds"),
-        "confidence": overall_confidence(rows),
+        "computed_at": iso_utc(now),
+        "confidence": round(overall_confidence(rows), 2),
         "data_delay": DATA_DELAY,
     }
 
 
 async def compute(params: dict) -> dict:
+    """Answer one paid request now (the x402 server calls this); see `compute_at`."""
+    return await compute_at(params, utc_now())
+
+
+async def compute_at(params: dict, now: datetime) -> dict:
     """
     Fetch Hyperliquid, score the requested assets, then remember this snapshot for next time.
 
-    Raises ValueError for bad parameters or when no requested asset is listed (a buyer
-    error, so the x402 server should answer 400 without settling), and UpstreamError
-    when Hyperliquid is unreachable.
+    Never raises for bad input or upstream failure: a bad `assets` parameter, an unreachable
+    Hyperliquid or no listed asset come back as {"error", "error_kind", ...} with confidence 0,
+    so the x402 server does not settle the payment.
     """
-    wanted = parse_assets_param(params)
-    contexts = await fetch_perp_contexts()
-    now = datetime.now(timezone.utc)
+    try:
+        wanted = parse_assets_param(params)
+    except ValueError as exc:
+        return error_response(params, str(exc), ERROR_BAD_REQUEST, now, DATA_DELAY)
+    try:
+        contexts = await hyperliquid.fetch_perp_contexts()
+    except (UpstreamError, HyperliquidParseError, ValueError) as exc:
+        return error_response(params, f"Hyperliquid unavailable: {exc}", ERROR_UPSTREAM, now, DATA_DELAY)
     rows, not_found = score_assets(wanted, contexts, _HISTORY)
     _HISTORY.record_all(contexts, now.timestamp())
     if not rows:
-        raise ValueError(f"none of {wanted} is a listed Hyperliquid perp")
+        message = f"none of {wanted} is a listed Hyperliquid perp"
+        return error_response(params, message, ERROR_NO_DATA, now, DATA_DELAY)
     return build_response(wanted, rows, not_found, len(cross_section(contexts)), now)
 
 
@@ -468,8 +489,8 @@ async def sample_now() -> int:
     snapshot per asset to the rolling window. Returns how many perps were seen.
     A scheduler may call this every few minutes so time-series scores are ready sooner.
     """
-    contexts = await fetch_perp_contexts()
-    _HISTORY.record_all(contexts, datetime.now(timezone.utc).timestamp())
+    contexts = await hyperliquid.fetch_perp_contexts()
+    _HISTORY.record_all(contexts, utc_now().timestamp())
     return len(contexts)
 
 

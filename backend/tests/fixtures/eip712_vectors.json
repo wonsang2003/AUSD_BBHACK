@@ -1,0 +1,617 @@
+{
+  "description": "EIP-712 cross-language vectors: Python (backend/app/chain/eip712.py) digests that web/lib/eip712.ts must reproduce. Regenerate: cd backend && uv run python -m tests.test_eip712",
+  "signer": "0x2c7536E3605D9C16a7a3D7b1898e529396a65c23",
+  "vectors": [
+    {
+      "name": "permit_300_ausd",
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "Permit": [
+            {
+              "name": "owner",
+              "type": "address"
+            },
+            {
+              "name": "spender",
+              "type": "address"
+            },
+            {
+              "name": "value",
+              "type": "uint256"
+            },
+            {
+              "name": "nonce",
+              "type": "uint256"
+            },
+            {
+              "name": "deadline",
+              "type": "uint256"
+            }
+          ]
+        },
+        "primaryType": "Permit",
+        "domain": {
+          "name": "Agora Dollar",
+          "version": "1",
+          "chainId": 84532,
+          "verifyingContract": "0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC"
+        },
+        "message": {
+          "owner": "0x2c7536E3605D9C16a7a3D7b1898e529396a65c23",
+          "spender": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+          "value": 300000000,
+          "nonce": 0,
+          "deadline": 1790003600
+        }
+      },
+      "digest": "0x4d384349fd10d8b50e98be0b1fd05264a56e5423c4c5dd31a2b067e271c44393",
+      "signature": "0xcdc6a1fbe7e4fbccba479e10fcaad90e471f78d1ae0e4187a9ee7bfac6718b5d2ad14c7420fc8b54db30eb8a7d77ecbeb74c1fd00080a94dc1b0455522afd6c41b"
+    },
+    {
+      "name": "permit_revoke_zero",
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "Permit": [
+            {
+              "name": "owner",
+              "type": "address"
+            },
+            {
+              "name": "spender",
+              "type": "address"
+            },
+            {
+              "name": "value",
+              "type": "uint256"
+            },
+            {
+              "name": "nonce",
+              "type": "uint256"
+            },
+            {
+              "name": "deadline",
+              "type": "uint256"
+            }
+          ]
+        },
+        "primaryType": "Permit",
+        "domain": {
+          "name": "Agora Dollar",
+          "version": "1",
+          "chainId": 84532,
+          "verifyingContract": "0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC"
+        },
+        "message": {
+          "owner": "0x2c7536E3605D9C16a7a3D7b1898e529396a65c23",
+          "spender": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+          "value": 0,
+          "nonce": 0,
+          "deadline": 1790003600
+        }
+      },
+      "digest": "0x032706f74dba023b01a6cef19818b76058f490e1d46a763604a7c25af3cfb00a",
+      "signature": "0xf747f09b835d0870aeb5165f788edffd64ce0fd5157823abe1c482acdbf9005c4efee121ea0f36b58fccbf202298bb02e231ba4e1757f82003976a17761d07df1c"
+    },
+    {
+      "name": "transfer_with_authorization",
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "TransferWithAuthorization": [
+            {
+              "name": "from",
+              "type": "address"
+            },
+            {
+              "name": "to",
+              "type": "address"
+            },
+            {
+              "name": "value",
+              "type": "uint256"
+            },
+            {
+              "name": "validAfter",
+              "type": "uint256"
+            },
+            {
+              "name": "validBefore",
+              "type": "uint256"
+            },
+            {
+              "name": "nonce",
+              "type": "bytes32"
+            }
+          ]
+        },
+        "primaryType": "TransferWithAuthorization",
+        "domain": {
+          "name": "Agora Dollar",
+          "version": "1",
+          "chainId": 84532,
+          "verifyingContract": "0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC"
+        },
+        "message": {
+          "from": "0x2c7536E3605D9C16a7a3D7b1898e529396a65c23",
+          "to": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+          "value": 50000,
+          "validAfter": 1789999970,
+          "validBefore": 1790000120,
+          "nonce": "0x1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      },
+      "digest": "0x2f2d112f0850381d38621faa09b340b448f0cb93ecae70d7d74e65f2afda821f",
+      "signature": "0x9e8ab56d3c07451cbe2e406344c13c0eb31322161ad13d32248f1bccddb4946a6263e9d5d4c994162061dbb22dfe94ec4b7719fc84e0f1e1bd2a9c7c293c09471b"
+    },
+    {
+      "name": "receive_with_authorization_daily_voucher",
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "ReceiveWithAuthorization": [
+            {
+              "name": "from",
+              "type": "address"
+            },
+            {
+              "name": "to",
+              "type": "address"
+            },
+            {
+              "name": "value",
+              "type": "uint256"
+            },
+            {
+              "name": "validAfter",
+              "type": "uint256"
+            },
+            {
+              "name": "validBefore",
+              "type": "uint256"
+            },
+            {
+              "name": "nonce",
+              "type": "bytes32"
+            }
+          ]
+        },
+        "primaryType": "ReceiveWithAuthorization",
+        "domain": {
+          "name": "Agora Dollar",
+          "version": "1",
+          "chainId": 84532,
+          "verifyingContract": "0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC"
+        },
+        "message": {
+          "from": "0x2c7536E3605D9C16a7a3D7b1898e529396a65c23",
+          "to": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+          "value": 8000000,
+          "validAfter": 1789948799,
+          "validBefore": 1790035200,
+          "nonce": "0x4396fbd97391f47bf7ab6421db8bc74566a15bc103cc1797b67604edf7366d4c"
+        }
+      },
+      "digest": "0xeccee3ef39eb667dbe4e374fca4eec7d7b50953f197dcd1374543ecb877102a9",
+      "signature": "0x72878e04b42d9ee391a9b2cbd9289ca9441ec6143a8f703c22f9b6d4fd3d9dee2917b34df0c7d0503990b8fd106b90008b19b0cba442e4d494db3c2d7db380651c"
+    },
+    {
+      "name": "cancel_authorization",
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "CancelAuthorization": [
+            {
+              "name": "authorizer",
+              "type": "address"
+            },
+            {
+              "name": "nonce",
+              "type": "bytes32"
+            }
+          ]
+        },
+        "primaryType": "CancelAuthorization",
+        "domain": {
+          "name": "Agora Dollar",
+          "version": "1",
+          "chainId": 84532,
+          "verifyingContract": "0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC"
+        },
+        "message": {
+          "authorizer": "0x2c7536E3605D9C16a7a3D7b1898e529396a65c23",
+          "nonce": "0x4396fbd97391f47bf7ab6421db8bc74566a15bc103cc1797b67604edf7366d4c"
+        }
+      },
+      "digest": "0xe8274180e3f6069989af041dbea68fa0aaad5a164d2e123f30529e34aa7cbe46",
+      "signature": "0x7e2d6ae3be6456e100fc26b1b1ee40fcd726c9642e8132b827e7c149604f7f8959847afe03fa3963a81bd97c79dda6c55aa70f36a1e55694f81825fb9b2758a31c"
+    },
+    {
+      "name": "budget_config_no_agents",
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "BudgetConfig": [
+            {
+              "name": "owner",
+              "type": "address"
+            },
+            {
+              "name": "dailyCap",
+              "type": "uint128"
+            },
+            {
+              "name": "expiry",
+              "type": "uint64"
+            },
+            {
+              "name": "agentAddrs",
+              "type": "address[]"
+            },
+            {
+              "name": "agentCaps",
+              "type": "uint128[]"
+            },
+            {
+              "name": "sectors",
+              "type": "bytes32[]"
+            },
+            {
+              "name": "nonce",
+              "type": "uint256"
+            }
+          ]
+        },
+        "primaryType": "BudgetConfig",
+        "domain": {
+          "name": "PocketDesk",
+          "version": "1",
+          "chainId": 84532,
+          "verifyingContract": "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+        },
+        "message": {
+          "owner": "0x2c7536E3605D9C16a7a3D7b1898e529396a65c23",
+          "dailyCap": 10000000,
+          "expiry": 1792592000,
+          "agentAddrs": [],
+          "agentCaps": [],
+          "sectors": [],
+          "nonce": 0
+        }
+      },
+      "digest": "0x5fc11bc32cbb8fd3516c2763883cc43958d18e9a84153a371763567c4ee837d8",
+      "signature": "0xaff379b20ff5f70b144bcfeda6fb6bc11d89124e4795cac9cbb7f75e171c8e6d62b5687c2e15de2900b90048a35c8082505af83591d00293f108585ea3a5c7df1b"
+    },
+    {
+      "name": "budget_config_two_agents",
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "BudgetConfig": [
+            {
+              "name": "owner",
+              "type": "address"
+            },
+            {
+              "name": "dailyCap",
+              "type": "uint128"
+            },
+            {
+              "name": "expiry",
+              "type": "uint64"
+            },
+            {
+              "name": "agentAddrs",
+              "type": "address[]"
+            },
+            {
+              "name": "agentCaps",
+              "type": "uint128[]"
+            },
+            {
+              "name": "sectors",
+              "type": "bytes32[]"
+            },
+            {
+              "name": "nonce",
+              "type": "uint256"
+            }
+          ]
+        },
+        "primaryType": "BudgetConfig",
+        "domain": {
+          "name": "PocketDesk",
+          "version": "1",
+          "chainId": 84532,
+          "verifyingContract": "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+        },
+        "message": {
+          "owner": "0x2c7536E3605D9C16a7a3D7b1898e529396a65c23",
+          "dailyCap": 10000000,
+          "expiry": 1792592000,
+          "agentAddrs": [
+            "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+            "0x90F79bf6EB2c4f870365E785982E1f101E93b906"
+          ],
+          "agentCaps": [
+            2000000,
+            3000000
+          ],
+          "sectors": [
+            "0x4f6e636861696e50657270730000000000000000000000000000000000000000",
+            "0x4f7074696f6e734576656e740000000000000000000000000000000000000000"
+          ],
+          "nonce": 1
+        }
+      },
+      "digest": "0xcf1821f5b07ab0c0a60d723eca8bfefb2f3e5c046e7ce78d119e3881df4ee2b6",
+      "signature": "0x0d302dbce9c9ff33b046c50ce47b9cc6add8087ef72427248a7bf9529e93d1181f40591eee5616b0d346c38bcc61d7037cf3ad9d80a3fd8759f40e6de6532db21b"
+    },
+    {
+      "name": "budget_config_four_agents",
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "BudgetConfig": [
+            {
+              "name": "owner",
+              "type": "address"
+            },
+            {
+              "name": "dailyCap",
+              "type": "uint128"
+            },
+            {
+              "name": "expiry",
+              "type": "uint64"
+            },
+            {
+              "name": "agentAddrs",
+              "type": "address[]"
+            },
+            {
+              "name": "agentCaps",
+              "type": "uint128[]"
+            },
+            {
+              "name": "sectors",
+              "type": "bytes32[]"
+            },
+            {
+              "name": "nonce",
+              "type": "uint256"
+            }
+          ]
+        },
+        "primaryType": "BudgetConfig",
+        "domain": {
+          "name": "PocketDesk",
+          "version": "1",
+          "chainId": 84532,
+          "verifyingContract": "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+        },
+        "message": {
+          "owner": "0x2c7536E3605D9C16a7a3D7b1898e529396a65c23",
+          "dailyCap": 10000000,
+          "expiry": 1792592000,
+          "agentAddrs": [
+            "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+            "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+            "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
+            "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc"
+          ],
+          "agentCaps": [
+            2000000,
+            3000000,
+            4000000,
+            5000000
+          ],
+          "sectors": [
+            "0x4f6e636861696e50657270730000000000000000000000000000000000000000",
+            "0x4f7074696f6e734576656e740000000000000000000000000000000000000000",
+            "0x4e65777353656e74696d656e7400000000000000000000000000000000000000",
+            "0x4d6163726f46696c696e67730000000000000000000000000000000000000000"
+          ],
+          "nonce": 7
+        }
+      },
+      "digest": "0x6eb3aaaca015caff9f6c5db528bd30cf90c6657c3b4785b3446ceedd1417496f",
+      "signature": "0x36ab38b0d4803bf28f64e6601fd6b5d47cf5c2096be668a4627824e5cca8bae725cc8dd5d42d796addd6fc75c7f508411f9f9e422e314de0632e0c92c743e5781c"
+    },
+    {
+      "name": "set_paused",
+      "typed_data": {
+        "types": {
+          "EIP712Domain": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "version",
+              "type": "string"
+            },
+            {
+              "name": "chainId",
+              "type": "uint256"
+            },
+            {
+              "name": "verifyingContract",
+              "type": "address"
+            }
+          ],
+          "SetPaused": [
+            {
+              "name": "owner",
+              "type": "address"
+            },
+            {
+              "name": "paused",
+              "type": "bool"
+            },
+            {
+              "name": "nonce",
+              "type": "uint256"
+            },
+            {
+              "name": "deadline",
+              "type": "uint256"
+            }
+          ]
+        },
+        "primaryType": "SetPaused",
+        "domain": {
+          "name": "PocketDesk",
+          "version": "1",
+          "chainId": 84532,
+          "verifyingContract": "0x5FbDB2315678afecb367f032d93F642f64180aa3"
+        },
+        "message": {
+          "owner": "0x2c7536E3605D9C16a7a3D7b1898e529396a65c23",
+          "paused": true,
+          "nonce": 3,
+          "deadline": 1790003600
+        }
+      },
+      "digest": "0xb928655edec0e8b39cf7f441a1e4bcb4373060dd533e4197d5d0cdc0cd764356",
+      "signature": "0xd33bdec1b2dd2a640a3bca90110a74ceebcc0e293df6711022fb8eaae76c31eb7fe111b9d103ae4ee8ea60b2b2f0cc04db25ebec29e6b0be511e148f0df2aae71c"
+    }
+  ]
+}

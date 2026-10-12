@@ -2,8 +2,10 @@
  * Typed client for the PocketDesk backend API (`docs/API.md` + SPEC §9 Update #1).
  *
  * One function per endpoint, named after what it does (`getState`, `openBudget`, …). Every
- * function returns the parsed JSON typed with `lib/types.ts`, or throws an `ApiError` carrying
- * the HTTP status and the backend's `{detail}` message, so pages can show failures honestly.
+ * function returns the parsed JSON typed with `lib/types.ts`, or throws an `ApiError` whose
+ * `message` IS the backend's `{detail}` text (HTTP 4xx/5xx), or a readable "backend unreachable"
+ * sentence when the request never got an answer. Callers catch it and show it inline
+ * (`components/terminal/InlineError.tsx`); nothing here ever throws a raw fetch/JSON error.
  *
  * The base URL is `NEXT_PUBLIC_API_URL` (see `lib/env.ts`). Signing never happens here: the
  * "prepare" endpoints return EIP-712 messages that the page signs with wagmi
@@ -21,6 +23,9 @@ import type {
   BudgetPrepareRequest,
   BudgetPrepareResponse,
   CatalogEntry,
+  DemoFundRequest,
+  DemoFundResponse,
+  DemoStatus,
   EventToday,
   Finding,
   Health,
@@ -32,12 +37,15 @@ import type {
   RevokeRequest,
   SessionStartResponse,
   SessionStopResponse,
+  SessionTickResponse,
   Settings,
   State,
   TxResponse,
+  TypedDataListResponse,
   TypedDataResponse,
   Voucher,
   VoucherCancelRequest,
+  VoucherCancelResponse,
   VoucherPrepareCancelRequest,
   VoucherPrepareRequest,
   VoucherPrepareResponse,
@@ -53,17 +61,26 @@ const JSON_HEADERS = { "Content-Type": "application/json", Accept: "application/
 
 // ─── transport ───────────────────────────────────────────────────────────────
 
-/** A non-2xx answer from the backend. `detail` is the backend's human-readable reason. */
+/**
+ * A failed API call. `message` and `detail` are the backend's human-readable reason (its
+ * `{detail}`), ready to show as-is. `status` is the HTTP status, or 0 when the backend could not
+ * be reached at all.
+ */
 export class ApiError extends Error {
   readonly status: number;
   readonly detail: string;
 
   constructor(status: number, detail: string) {
-    super(`API ${status}: ${detail}`);
+    super(detail);
     this.name = "ApiError";
     this.status = status;
     this.detail = detail;
   }
+}
+
+/** Message used when the request never got an HTTP answer (backend down, CORS, network). */
+export function unreachableDetail(): string {
+  return `Backend unreachable at ${API_URL} (is the server running?)`;
 }
 
 /** Absolute URL of an API path, e.g. apiUrl("/api/state") → "http://localhost:8000/api/state". */
@@ -77,16 +94,30 @@ export function streamUrl(): string {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(apiUrl(path), { ...init, headers: JSON_HEADERS, cache: "no-store" });
+  let response: Response;
+  try {
+    response = await fetch(apiUrl(path), { ...init, headers: JSON_HEADERS, cache: "no-store" });
+  } catch {
+    throw new ApiError(0, unreachableDetail());
+  }
   if (!response.ok) {
     throw new ApiError(response.status, await errorDetail(response));
   }
-  return (await response.json()) as T;
+  try {
+    return (await response.json()) as T;
+  } catch {
+    throw new ApiError(response.status, `Malformed JSON from ${path}`);
+  }
 }
 
 /** Rule: prefer the backend's `{detail}`; fall back to the raw body, then the status text. */
 async function errorDetail(response: Response): Promise<string> {
-  const body = await response.text();
+  let body = "";
+  try {
+    body = await response.text();
+  } catch {
+    // body unreadable: fall back to the status text below
+  }
   try {
     const parsed: unknown = JSON.parse(body);
     if (parsed && typeof parsed === "object" && "detail" in parsed) {
@@ -96,7 +127,7 @@ async function errorDetail(response: Response): Promise<string> {
   } catch {
     // not JSON: use the raw text below
   }
-  return body || response.statusText;
+  return body || response.statusText || `HTTP ${response.status}`;
 }
 
 function get<T>(path: string): Promise<T> {
@@ -156,7 +187,7 @@ export function getAlerts(limit: number = DEFAULT_ALERTS_LIMIT): Promise<Alert[]
  */
 export async function getCatalog(): Promise<CatalogEntry[]> {
   const body = await get<CatalogEntry[] | { catalog: CatalogEntry[] }>("/api/catalog");
-  return Array.isArray(body) ? body : body.catalog;
+  return Array.isArray(body) ? body : (body?.catalog ?? []);
 }
 
 export function getSettings(): Promise<Settings> {
@@ -215,6 +246,14 @@ export function stopSession(): Promise<SessionStopResponse> {
   return post<SessionStopResponse>("/api/session/stop");
 }
 
+/**
+ * Run every agent once right now (or only `agent`): each one decides, buys within its caps, and
+ * reports. Used by the dashboard's RUN AGENTS NOW button.
+ */
+export function sessionTick(agent?: string): Promise<SessionTickResponse> {
+  return post<SessionTickResponse>("/api/session/tick", agent ? { agent } : {});
+}
+
 export function pauseAgent(name: string): Promise<OkResponse> {
   return post<OkResponse>(`/api/agents/${encodeURIComponent(name)}/pause`);
 }
@@ -231,9 +270,21 @@ export function saveSettings(settings: Settings): Promise<Settings> {
   return post<Settings>("/api/settings", settings);
 }
 
+// ─── demo funding (local / testnet demo: the server-side demo wallet signs, no browser wallet) ───
+
+/** Whether the backend can open a budget from its own demo wallet (`DEMO_USER_PRIVATE_KEY`). */
+export function demoStatus(): Promise<DemoStatus> {
+  return get<DemoStatus>("/api/demo/status");
+}
+
+/** Faucet → permit → open budget from the demo wallet; `{}` uses the backend defaults. */
+export function demoFund(body: DemoFundRequest = {}): Promise<DemoFundResponse> {
+  return post<DemoFundResponse>("/api/demo/fund", body);
+}
+
 // ─── daily vouchers (Update #1 D, "Maximum safety" mode) ─────────────────────
 
-/** One ReceiveWithAuthorization message per UTC day, to be signed unchanged. */
+/** 7 ReceiveWithAuthorization messages (one per UTC day) + the BudgetConfig, to be signed unchanged. */
 export function prepareVouchers(body: VoucherPrepareRequest): Promise<VoucherPrepareResponse> {
   return post<VoucherPrepareResponse>("/api/vouchers/prepare", body);
 }
@@ -242,16 +293,18 @@ export function submitVouchers(body: VoucherSubmitRequest): Promise<VoucherSubmi
   return post<VoucherSubmitResponse>("/api/vouchers/submit", body);
 }
 
-export function listVouchers(owner?: string): Promise<Voucher[]> {
+/** The owner's vouchers. Accepts a plain list or `{vouchers: [...]}`. */
+export async function listVouchers(owner?: string): Promise<Voucher[]> {
   const query = owner ? `?owner=${encodeURIComponent(owner)}` : "";
-  return get<Voucher[]>(`/api/vouchers${query}`);
+  const body = await get<Voucher[] | { vouchers: Voucher[] }>(`/api/vouchers${query}`);
+  return Array.isArray(body) ? body : (body?.vouchers ?? []);
 }
 
-/** A CancelAuthorization for a future day's voucher nonce. */
-export function prepareCancelVoucher(body: VoucherPrepareCancelRequest): Promise<TypedDataResponse> {
-  return post<TypedDataResponse>("/api/vouchers/prepare-cancel", body);
+/** One CancelAuthorization message per future day's voucher nonce. */
+export function prepareCancelVouchers(body: VoucherPrepareCancelRequest): Promise<TypedDataListResponse> {
+  return post<TypedDataListResponse>("/api/vouchers/prepare-cancel", body);
 }
 
-export function cancelVoucher(body: VoucherCancelRequest): Promise<TxResponse> {
-  return post<TxResponse>("/api/vouchers/cancel", body);
+export function cancelVouchers(body: VoucherCancelRequest): Promise<VoucherCancelResponse> {
+  return post<VoucherCancelResponse>("/api/vouchers/cancel", body);
 }

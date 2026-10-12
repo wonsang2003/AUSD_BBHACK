@@ -24,3 +24,4 @@ web/.next/
 web/out/
 node_modules/
 .vercel
+.env.local-anvil

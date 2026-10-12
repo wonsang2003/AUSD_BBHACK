@@ -1,0 +1,227 @@
+[
+ {
+  "universe": [
+   {
+    "szDecimals": 5,
+    "name": "BTC",
+    "maxLeverage": 40,
+    "marginTableId": 40
+   },
+   {
+    "szDecimals": 4,
+    "name": "ETH",
+    "maxLeverage": 25,
+    "marginTableId": 25
+   },
+   {
+    "szDecimals": 2,
+    "name": "SOL",
+    "maxLeverage": 20,
+    "marginTableId": 20
+   },
+   {
+    "szDecimals": 2,
+    "name": "HYPE",
+    "maxLeverage": 10,
+    "marginTableId": 10
+   },
+   {
+    "szDecimals": 0,
+    "name": "DOGE",
+    "maxLeverage": 10,
+    "marginTableId": 10
+   },
+   {
+    "szDecimals": 0,
+    "name": "XRP",
+    "maxLeverage": 10,
+    "marginTableId": 10
+   },
+   {
+    "szDecimals": 2,
+    "name": "AVAX",
+    "maxLeverage": 10,
+    "marginTableId": 10
+   },
+   {
+    "szDecimals": 1,
+    "name": "LINK",
+    "maxLeverage": 10,
+    "marginTableId": 10
+   },
+   {
+    "szDecimals": 1,
+    "name": "FTT",
+    "maxLeverage": 3,
+    "marginTableId": 3,
+    "isDelisted": true
+   },
+   {
+    "szDecimals": 0,
+    "name": "TINY",
+    "maxLeverage": 3,
+    "marginTableId": 3
+   }
+  ],
+  "marginTables": [
+   [
+    3,
+    {
+     "description": "",
+     "marginTiers": [
+      {
+       "lowerBound": "0.0",
+       "maxLeverage": 3
+      }
+     ]
+    }
+   ]
+  ]
+ },
+ [
+  {
+   "funding": "0.000042",
+   "openInterest": "28512.4421",
+   "prevDayPx": "116004.0",
+   "dayNtlVlm": "4210553321.88",
+   "premium": "0.0001",
+   "oraclePx": "118250.0",
+   "markPx": "118262.0",
+   "midPx": "118263.5",
+   "impactPxs": [
+    "118262.0",
+    "118262.0"
+   ],
+   "dayBaseVlm": "0.0"
+  },
+  {
+   "funding": "0.0000125",
+   "openInterest": "612003.118",
+   "prevDayPx": "4402.7",
+   "dayNtlVlm": "1890223311.02",
+   "premium": "0.0001",
+   "oraclePx": "4350.1",
+   "markPx": "4351.3",
+   "midPx": "4351.25",
+   "impactPxs": [
+    "4351.3",
+    "4351.3"
+   ],
+   "dayBaseVlm": "0.0"
+  },
+  {
+   "funding": "-0.00003",
+   "openInterest": "3044551.21",
+   "prevDayPx": "205.11",
+   "dayNtlVlm": "455120334.6",
+   "premium": "0.0001",
+   "oraclePx": "212.48",
+   "markPx": "212.55",
+   "midPx": "212.56",
+   "impactPxs": [
+    "212.55",
+    "212.55"
+   ],
+   "dayBaseVlm": "0.0"
+  },
+  {
+   "funding": "0.0000125",
+   "openInterest": "12450332.4",
+   "prevDayPx": "46.02",
+   "dayNtlVlm": "201334456.1",
+   "premium": "0.0001",
+   "oraclePx": "47.88",
+   "markPx": "47.912",
+   "midPx": "47.91",
+   "impactPxs": [
+    "47.912",
+    "47.912"
+   ],
+   "dayBaseVlm": "0.0"
+  },
+  {
+   "funding": "0.0000125",
+   "openInterest": "880312455.0",
+   "prevDayPx": "0.26991",
+   "dayNtlVlm": "88123004.5",
+   "premium": "0.0001",
+   "oraclePx": "0.27330",
+   "markPx": "0.27341",
+   "midPx": "0.27342",
+   "impactPxs": [
+    "0.27341",
+    "0.27341"
+   ],
+   "dayBaseVlm": "0.0"
+  },
+  {
+   "funding": "0.000011",
+   "openInterest": "41220345.0",
+   "prevDayPx": "2.9120",
+   "dayNtlVlm": "120044312.7",
+   "premium": "0.0001",
+   "oraclePx": "2.8805",
+   "markPx": "2.8811",
+   "midPx": "2.8812",
+   "impactPxs": [
+    "2.8811",
+    "2.8811"
+   ],
+   "dayBaseVlm": "0.0"
+  },
+  {
+   "funding": "0.0000125",
+   "openInterest": "2210334.55",
+   "prevDayPx": "30.88",
+   "dayNtlVlm": "35221004.4",
+   "premium": "0.0001",
+   "oraclePx": "31.43",
+   "markPx": "31.442",
+   "midPx": "31.44",
+   "impactPxs": [
+    "31.442",
+    "31.442"
+   ],
+   "dayBaseVlm": "0.0"
+  },
+  {
+   "funding": "0.000014",
+   "openInterest": "3901221.7",
+   "prevDayPx": "22.41",
+   "dayNtlVlm": "28004332.9",
+   "premium": "0.0001",
+   "oraclePx": "22.87",
+   "markPx": "22.881",
+   "midPx": "22.88",
+   "impactPxs": [
+    "22.881",
+    "22.881"
+   ],
+   "dayBaseVlm": "0.0"
+  },
+  {
+   "funding": "0.0000125",
+   "openInterest": "0.0",
+   "prevDayPx": "1.2",
+   "dayNtlVlm": "0.0",
+   "premium": "0.0001",
+   "oraclePx": "1.2",
+   "markPx": "1.2011",
+   "midPx": null,
+   "impactPxs": null,
+   "dayBaseVlm": "0.0"
+  },
+  {
+   "funding": "0.0005",
+   "openInterest": "1200.0",
+   "prevDayPx": null,
+   "dayNtlVlm": "12034.1",
+   "premium": "0.0001",
+   "oraclePx": "0.0410",
+   "markPx": "0.0412",
+   "midPx": null,
+   "impactPxs": null,
+   "dayBaseVlm": "0.0"
+  }
+ ]
+]

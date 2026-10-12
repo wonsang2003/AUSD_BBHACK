@@ -37,6 +37,11 @@ export interface Health {
   ausd_address: AddressString;
   controller_address: AddressString;
   live_vendor_mode: boolean;
+  startup_error?: string | null;
+  /** (proposed) The backend's RPC URL; a localhost URL means the local anvil demo chain. */
+  rpc_url?: string | null;
+  /** (proposed) True when the backend runs against a local chain (anvil), not Base Sepolia. */
+  local_chain?: boolean;
 }
 
 export interface AgentConfig {
@@ -77,6 +82,8 @@ export interface BudgetState {
   revoked: boolean;
   allowance_remaining: Atomic;
   wallet_balance: Atomic;
+  /** Funding mode of the open budget (the backend also sends it here); null when no budget. */
+  mode?: BudgetMode | null;
 }
 
 export interface AgentState {
@@ -92,15 +99,26 @@ export interface AgentState {
   paused: boolean;
   reasons: string[];
   /** Update #1: agents hold zero ETH (the relayer pays gas); the dashboard shows this is 0. */
-  eth_balance_wei?: WeiString;
+  eth_balance_wei?: WeiString | number;
+  /** Demo vendors this agent buys from. */
+  sellers?: string[];
+  /** Per-agent breaker backoff, when the agent is backing off after a failed pre-flight. */
+  backoff?: AgentBackoffStatus | null;
 }
 
 /** Update #1: the gas-paying relayer. (proposed location inside State) */
 export interface RelayerState {
   address: AddressString;
-  eth_balance_wei: WeiString;
-  eth_spent_today_wei: WeiString;
+  eth_balance_wei: WeiString | number;
+  eth_spent_today_wei: WeiString | number;
   tx_count_today: number;
+}
+
+/** Update #1 compliance switches reported by the backend (all true in a correct build). */
+export interface ComplianceState {
+  freeze_check_before_payment?: boolean;
+  preflight_simulation?: boolean;
+  agents_zero_eth?: boolean;
 }
 
 export interface SessionState {
@@ -118,11 +136,17 @@ export interface SavingsState {
   mtd_spend_atomic: Atomic;
   prorated_subscriptions_usd: number;
   subscriptions: Subscription[];
+  savings_usd?: number;
 }
+
+/** How the budget is funded: one revocable permit ("Flexible") or 7 signed daily vouchers ("Maximum safety"). */
+export type BudgetMode = "permit" | "voucher";
 
 /** GET /api/state (also the `state` SSE event). */
 export interface State {
   owner: AddressString | null;
+  /** (proposed) Missing → "permit" when a budget exists. */
+  mode?: BudgetMode;
   budget: BudgetState;
   monthly: { cap: Atomic; spent_mtd: Atomic };
   runway_days: number | null;
@@ -132,6 +156,7 @@ export interface State {
   savings: SavingsState;
   relayer?: RelayerState;
   breaker?: BreakerStatus;
+  compliance?: ComplianceState;
 }
 
 export type PurchaseStatus = "bought" | "skipped" | "failed";
@@ -403,6 +428,49 @@ export interface SessionStopResponse {
   sweep_txs: AgentTx[];
 }
 
+/** POST /api/session/tick response. Every field optional: the dashboard summarizes what is there. */
+export interface SessionTickResponse {
+  purchases?: Purchase[];
+  findings?: Finding[];
+  results?: Array<Record<string, unknown>>;
+  agents?: string[];
+  message?: string;
+}
+
+/** GET /api/demo/status: can the backend open a budget from its server-side demo wallet? */
+export interface DemoStatus {
+  available: boolean;
+  reason?: string | null;
+  user_address?: AddressString | null;
+  ausd_balance_atomic?: Atomic | null;
+  budget_exists?: boolean;
+}
+
+/** POST /api/demo/fund body; `{}` uses the backend's default budget. */
+export interface DemoFundRequest {
+  total_budget_atomic?: Atomic;
+  daily_cap_atomic?: Atomic;
+  plan_days?: number;
+  agent_caps_atomic?: Record<string, Atomic>;
+}
+
+/** One step of the demo funding flow (faucet, permit, open budget, …) and its relayer tx. */
+export interface DemoFundStep {
+  step?: string;
+  name?: string;
+  label?: string;
+  status?: string;
+  detail?: string | null;
+  tx_hash?: TxHash | null;
+}
+
+/** POST /api/demo/fund response. */
+export interface DemoFundResponse {
+  owner?: AddressString;
+  steps?: DemoFundStep[];
+  tx_hash?: TxHash | null;
+}
+
 export interface AskResponse {
   answer: string;
   agents_used: string[];
@@ -410,65 +478,87 @@ export interface AskResponse {
   receipts: Receipt[];
 }
 
-// ─── Update #1 D: daily vouchers ("Maximum safety" mode) — all (proposed) ─────
+// ─── Update #1 D: daily vouchers ("Maximum safety" mode) ─────────────────────
+//
+// Day numbering: `day_index` is the absolute UTC day number floor(unix / 86400), the same number
+// `voucherWindow()` / `voucherNonce()` in `lib/eip712.ts` take. A voucher for day d is valid from
+// d·86400 − 1 to (d+1)·86400 (exclusive bounds, ERC-3009 rule).
 
-export type VoucherStatus = "pending" | "redeemed" | "canceled" | "expired";
+/** "pending" = signed, not yet redeemed; "redeemed" = the keeper pulled it on its day. */
+export type VoucherStatus = "pending" | "redeemed" | "cancelled" | "failed" | "expired";
 
-/** POST /api/vouchers/prepare body. */
+/** POST /api/vouchers/prepare body: one AUSD amount per day for the next 7 UTC days (today first). */
 export interface VoucherPrepareRequest {
   owner: AddressString;
-  daily_amount_atomic: Atomic;
-  days: number;
+  daily_values_atomic: Atomic[];
+  salt?: string; // bytes32 hex; the backend picks a random one when omitted
 }
 
-/** One unsigned voucher: a ReceiveWithAuthorization for one UTC day. */
-export interface PreparedVoucher {
-  day_index: number;
-  typed_data: TypedDataJson;
-}
-
+/**
+ * POST /api/vouchers/prepare response: 7 unsigned `ReceiveWithAuthorization` messages (to = the
+ * BudgetController, one per UTC day, in day order) and the `BudgetConfig` message (agents + caps).
+ */
 export interface VoucherPrepareResponse {
-  vouchers: PreparedVoucher[];
+  vouchers: TypedDataJson[];
+  config: TypedDataJson;
 }
 
+/** One signed voucher, its fields copied unchanged from the prepared message. */
 export interface SignedVoucher {
   day_index: number;
-  message: Record<string, unknown>; // the typed_data.message from prepare, unchanged
+  value: string | number;
+  valid_after: string | number;
+  valid_before: string | number;
+  nonce: string; // bytes32 hex
   signature: string;
 }
 
-/** POST /api/vouchers/submit body. */
+/** POST /api/vouchers/submit body. `config` is the prepared `config.message`, unchanged. */
 export interface VoucherSubmitRequest {
   owner: AddressString;
   vouchers: SignedVoucher[];
+  config: Record<string, unknown>;
+  config_signature: string;
 }
 
+/** POST /api/vouchers/submit response (the config tx, when the backend submits one). */
 export interface VoucherSubmitResponse {
-  stored: number;
+  stored?: number;
+  tx_hash?: TxHash | null;
 }
 
-/** GET /api/vouchers row. */
+/** GET /api/vouchers row. `value` is AUSD atomic (some builds send `value_atomic`). */
 export interface Voucher {
   day_index: number;
-  value_atomic: Atomic;
-  valid_after: number; // unix seconds
-  valid_before: number; // unix seconds
+  value?: string | number;
+  value_atomic?: Atomic;
+  valid_after: string | number;
+  valid_before: string | number;
   nonce: string;
-  status: VoucherStatus;
+  status: VoucherStatus | string;
   tx_hash: TxHash | null;
 }
 
-/** POST /api/vouchers/prepare-cancel body → TypedDataResponse (a CancelAuthorization). */
+/** POST /api/vouchers/prepare-cancel body → `{typed_data: TypedData[]}` (one CancelAuthorization per day). */
 export interface VoucherPrepareCancelRequest {
   owner: AddressString;
-  day_index: number;
+  day_indexes: number[];
 }
 
-/** POST /api/vouchers/cancel body → TxResponse. */
+export interface TypedDataListResponse {
+  typed_data: TypedDataJson[];
+}
+
+/** POST /api/vouchers/cancel body. */
 export interface VoucherCancelRequest {
   owner: AddressString;
-  day_index: number;
-  signature: string;
+  cancels: Array<{ nonce: string; signature: string }>;
+}
+
+/** POST /api/vouchers/cancel response: one tx per cancelled nonce (or a single tx). */
+export interface VoucherCancelResponse {
+  tx_hashes?: TxHash[];
+  tx_hash?: TxHash;
 }
 
 // ─── SSE ─────────────────────────────────────────────────────────────────────

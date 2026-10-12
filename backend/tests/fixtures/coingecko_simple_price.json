@@ -1,0 +1,14 @@
+{
+ "bitcoin": {
+  "usd": 118254.11,
+  "usd_24h_change": 1.9450318012
+ },
+ "ethereum": {
+  "usd": 4350.92,
+  "usd_24h_change": -1.1702233131
+ },
+ "solana": {
+  "usd": 212.61,
+  "usd_24h_change": 3.6233019201
+ }
+}

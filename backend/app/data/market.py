@@ -1,8 +1,9 @@
 """
 Market strip for the dashboard (`GET /api/market`): free, clearly labeled quotes only.
 
-Rows have the `/api/market` shape `{symbol, price, change_24h_pct, source, delayed}`
-(`MarketQuote` from `app/data/coingecko.py`). Three free sources, each labeled:
+Entry point: `await market_strip(watchlist)` → JSON rows of the `/api/market` shape
+`{symbol, price, change_24h_pct, source, delayed}` (`MarketQuote` from `app/data/coingecko.py`).
+Three free sources, each labeled:
 
     crypto   1. CoinGecko keyless simple/price          source "coingecko"            delayed False
              2. Hyperliquid perp book mid (fallback)    source "hyperliquid perp mid"  delayed False
@@ -247,3 +248,12 @@ async def build_market_strip(symbols: list[str] | None = None) -> MarketStrip:
     unpriced = [symbol for symbol in crypto if symbol not in priced]
     hyperliquid_rows = await _hyperliquid_rows(unpriced, errors)
     return MarketStrip(rows=merge_strip(wanted, coingecko_rows, hyperliquid_rows, equity_rows), errors=errors)
+
+
+async def market_strip(watchlist: list[str] | None = None) -> list[dict]:
+    """
+    `GET /api/market` rows `[{symbol, price, change_24h_pct, source, delayed}]` for `watchlist`.
+    Never raises for an upstream failure: a failing source only leaves its rows out.
+    """
+    strip = await build_market_strip(watchlist)
+    return strip.to_rows()

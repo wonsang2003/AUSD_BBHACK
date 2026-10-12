@@ -33,7 +33,7 @@ import re
 import statistics
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import TypeVar
 
 from app.config import get_settings
@@ -41,16 +41,23 @@ from app.data import contextdev, gdelt
 from app.data.contextdev import SearchResult
 from app.data.gdelt import Article, GdeltError, TonePoint
 from app.data.http import UpstreamError
-from app.sellers.expected_move import require_payout_address
+from app.sellers.expected_move import (
+    ERROR_BAD_REQUEST,
+    ERROR_UPSTREAM,
+    error_response,
+    iso_utc,
+    require_payout_address,
+    utc_now,
+)
 from app.x402.offer import SellerOffer
 
 # ─── offer ───────────────────────────────────────────────────────────────────
 
 SELLER_ID = "news_sentiment"
-SELLER_PATH = "/sell/news-sentiment"
+OFFER_PATH = "/sell/news-sentiment"
 PRICE_ATOMIC = 30_000  # 0.03 AUSD (6 decimals)
 PAYOUT_SETTING_NAME = "SELLER_PAYTO_NEWS"   # .env variable holding this seller's payout address
-DESCRIPTION = "News sentiment (demo vendor): GDELT 24h headlines, tone trend and event flags for an asset or ticker"
+OFFER_DESCRIPTION = "News sentiment (demo vendor): GDELT 24h headlines, tone trend and event flags for an asset or ticker"
 
 # ─── parameters ──────────────────────────────────────────────────────────────
 
@@ -134,8 +141,8 @@ def make_offer() -> SellerOffer:
     Raises SellerConfigError if that address is empty or invalid."""
     return SellerOffer(
         seller_id=SELLER_ID,
-        path=SELLER_PATH,
-        description=DESCRIPTION,
+        path=OFFER_PATH,
+        description=OFFER_DESCRIPTION,
         price_atomic=PRICE_ATOMIC,
         pay_to=require_payout_address(get_settings().seller_payto_news, PAYOUT_SETTING_NAME),
     )
@@ -414,8 +421,8 @@ def build_response(
             "context_dev_results": len(fetched.search_results),
             "errors": fetched.errors,
         },
-        "computed_at": now.isoformat(timespec="seconds"),
-        "confidence": confidence_for(len(fetched.articles), tone),
+        "computed_at": iso_utc(now),
+        "confidence": round(confidence_for(len(fetched.articles), tone), 2),
         "data_delay": DATA_DELAY,
     }
 
@@ -452,16 +459,25 @@ async def fetch_news(query: str) -> FetchedNews:
 
 
 async def compute(params: dict) -> dict:
+    """Answer one paid request now (the x402 server calls this); see `compute_at`."""
+    return await compute_at(params, utc_now())
+
+
+async def compute_at(params: dict, now: datetime) -> dict:
     """
     Fetch the news, analyze it and phrase a summary.
 
-    Raises ValueError for a bad `q` (buyer error → 400, no settlement) and UpstreamError
-    when every provider failed (nothing to sell).
+    Never raises for bad input or upstream failure: a bad `q` or "no news source answered"
+    comes back as {"error", "error_kind", ...} with confidence 0 (the buyer is not charged).
     """
-    query = parse_query_param(params)
+    try:
+        query = parse_query_param(params)
+    except ValueError as exc:
+        return error_response(params, str(exc), ERROR_BAD_REQUEST, now, DATA_DELAY)
     fetched = await fetch_news(query)
     if not fetched.articles and not fetched.tone_points and not fetched.search_results and fetched.errors:
-        raise UpstreamError(PROVIDER_GDELT, f"no news source answered: {fetched.errors}")
+        message = f"no news source answered: {fetched.errors}"
+        return error_response(params, message, ERROR_UPSTREAM, now, DATA_DELAY)
     read = analyze(fetched.articles, fetched.tone_points, fetched.search_results)
     summary, summary_method = await summary_for(read.headlines, read.tone, read.flags, query)
-    return build_response(query, fetched, read, summary, summary_method, datetime.now(timezone.utc))
+    return build_response(query, fetched, read, summary, summary_method, now)

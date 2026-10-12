@@ -96,7 +96,10 @@ def edgar_headers() -> dict[str, str]:
 
 def parse_company_tickers(payload: dict) -> dict[str, int]:
     """Map upper-case ticker → CIK (int) from company_tickers.json."""
-    return {str(row["ticker"]).upper(): int(row["cik_str"]) for row in payload.values()}
+    try:
+        return {str(row["ticker"]).upper(): int(row["cik_str"]) for row in payload.values()}
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise EdgarError(f"company_tickers.json is not in the documented shape: {exc!r}") from exc
 
 
 def parse_recent_filings(submissions: dict, form: str = FORM_4) -> list[Filing]:
@@ -116,10 +119,14 @@ def parse_recent_filings(submissions: dict, form: str = FORM_4) -> list[Filing]:
     for index, form_type in enumerate(forms):
         if form_type != form:
             continue
+        try:
+            filing_date = date.fromisoformat(filing_dates[index])
+        except (IndexError, ValueError) as exc:
+            raise EdgarError(f"bad filingDate at row {index}: {exc}") from exc
         filings.append(
             Filing(
                 accession_number=accessions[index],
-                filing_date=date.fromisoformat(filing_dates[index]),
+                filing_date=filing_date,
                 form=form_type,
                 primary_document=documents[index],
             )
@@ -178,8 +185,28 @@ def _first_reporting_owner(root: ElementTree.Element) -> dict:
     }
 
 
+def _transaction(row: ElementTree.Element, owner: dict, accession_number: str) -> InsiderTransaction | None:
+    """One `<nonDerivativeTransaction>` → InsiderTransaction; None when it has no date."""
+    raw_date = _text(row, "transactionDate/value")
+    if not raw_date:
+        return None
+    try:
+        return InsiderTransaction(
+            **owner,
+            security_title=_text(row, "securityTitle/value"),
+            transaction_date=date.fromisoformat(raw_date[:ISO_DATE_LENGTH]),
+            code=_text(row, "transactionCoding/transactionCode"),
+            shares=_number(row, "transactionAmounts/transactionShares/value"),
+            price_per_share=_number(row, "transactionAmounts/transactionPricePerShare/value"),
+            acquired_disposed=_text(row, "transactionAmounts/transactionAcquiredDisposedCode/value"),
+            accession_number=accession_number,
+        )
+    except ValueError as exc:
+        raise EdgarError(f"Form 4 {accession_number or ''} has a malformed transaction: {exc}") from exc
+
+
 def parse_form4_xml(xml_text: str, accession_number: str = "") -> list[InsiderTransaction]:
-    """Every non-derivative transaction in one Form 4 XML document."""
+    """Every dated non-derivative transaction in one Form 4 XML document."""
     try:
         root = ElementTree.fromstring(xml_text)
     except ElementTree.ParseError as exc:
@@ -187,21 +214,9 @@ def parse_form4_xml(xml_text: str, accession_number: str = "") -> list[InsiderTr
     owner = _first_reporting_owner(root)
     transactions: list[InsiderTransaction] = []
     for row in root.findall("nonDerivativeTable/nonDerivativeTransaction"):
-        raw_date = _text(row, "transactionDate/value")
-        if not raw_date:
-            continue
-        transactions.append(
-            InsiderTransaction(
-                **owner,
-                security_title=_text(row, "securityTitle/value"),
-                transaction_date=date.fromisoformat(raw_date[:ISO_DATE_LENGTH]),
-                code=_text(row, "transactionCoding/transactionCode"),
-                shares=_number(row, "transactionAmounts/transactionShares/value"),
-                price_per_share=_number(row, "transactionAmounts/transactionPricePerShare/value"),
-                acquired_disposed=_text(row, "transactionAmounts/transactionAcquiredDisposedCode/value"),
-                accession_number=accession_number,
-            )
-        )
+        transaction = _transaction(row, owner, accession_number)
+        if transaction is not None:
+            transactions.append(transaction)
     return transactions
 
 

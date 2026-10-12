@@ -105,6 +105,8 @@ def parse_simple_price(payload: dict, symbols: list[str]) -> list[MarketQuote]:
 async def fetch_market_strip(symbols: list[str] | None = None) -> list[MarketQuote]:
     """Spot USD prices and 24 h change for `symbols` (default BTC, ETH, SOL) in one request."""
     wanted = list(symbols) if symbols else list(DEFAULT_MARKET_STRIP_SYMBOLS)
+    if not coingecko_ids_for(wanted):
+        return []  # no symbol CoinGecko knows: nothing to ask for
     payload = await get_json(
         COINGECKO_SIMPLE_PRICE_URL,
         source=SOURCE_NAME,
